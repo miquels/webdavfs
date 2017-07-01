@@ -44,6 +44,8 @@ func main() {
 		fuse.FSName(url),
 		fuse.Subtype("webdav"),
 		fuse.VolumeName(url),
+		fuse.AllowOther(),
+		fuse.MaxReadahead(1024 * 1024),
 	)
 	if err != nil {
 		log.Fatal(err)

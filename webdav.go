@@ -1,7 +1,7 @@
 package main;
 
 import (
-//	"fmt"
+	"fmt"
 	"bytes"
 	"encoding/xml"
 	"errors"
@@ -11,22 +11,35 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"bazil.org/fuse"
 )
 
 type DavClient struct {
 	Url		string
 	Username	string
 	Password	string
+	Methods		map[string]bool
+	DavSupport	map[string]bool
+	IsSabre		bool
+	IsApache	bool
 	base		string
 	cc		*http.Client
+}
+
+type DavError struct {
+	Code		int
+	Message		string
+	Location	string
+	Errnum		syscall.Errno
 }
 
 type Dnode struct {
 	Name		string
 	IsDir		bool
-	Mtime		int64
-	Ctime		int64
+	Mtime		time.Time
+	Ctime		time.Time
 	Size		uint64
 }
 
@@ -56,8 +69,30 @@ var mostProps = "<D:prop><D:resourcetype/><D:creationdate/><D:getlastmodified/><
 
 var davTimeFormat = "2006-01-02T15:04:05Z"
 
+var davToErrnoMap = map[int]syscall.Errno{
+	404:	syscall.ENOENT,
+	405:	syscall.EPERM,
+	408:	syscall.ETIMEDOUT,
+	409:	syscall.ENOENT,
+	416:	syscall.ERANGE,
+	504:	syscall.ETIMEDOUT,
+}
+
+func davToErrno(err *DavError) {
+	if fe, ok := davToErrnoMap[err.Code]; ok {
+		err.Errnum = fe
+		return
+	}
+	err.Errnum = syscall.EIO
+	return
+}
+
 func statusIsValid(resp *http.Response) bool {
 	return resp.StatusCode / 100 == 2
+}
+
+func statusIsRedirect(resp *http.Response) bool {
+	return resp.StatusCode / 100 == 3
 }
 
 func stripQuotes(s string) string {
@@ -68,23 +103,97 @@ func stripQuotes(s string) string {
 	return s
 }
 
-func parseTime (s string) int64 {
-	var t time.Time
-	var err error
+func stripLastSlash(s string) string {
+	l := len(s)
+	for l > 1 {
+		if s[l-1] != '/' {
+			return s[:l]
+		}
+		l--
+	}
+	return s
+}
+
+func addSlash(s string) string {
+	if len(s) > 0 && s[len(s)-1] != '/' {
+		s += "/"
+	}
+	return s
+}
+
+func dirName(s string) string {
+	s = stripLastSlash(s)
+	i := strings.LastIndex(s, "/")
+	if i > 0 {
+		return s[:i]
+	}
+	return s
+}
+
+func parseTime (s string) (t time.Time) {
 	if len(s) > 0 && s[0] >= '0' && s[0] <= '9' {
-		t, err = time.Parse(davTimeFormat, s)
+		t, _ = time.Parse(davTimeFormat, s)
 	} else {
-		t, err = http.ParseTime(s)
+		t, _ = http.ParseTime(s)
 	}
-	if err != nil {
-		return 0
+	return
+}
+
+func joinPath(s1, s2 string) string {
+	if (len(s1) > 0 && s1[len(s1)-1] == '/') ||
+	   (len(s2) > 0 && s2[0] == '/') {
+		return s1 + s2
 	}
-	return t.Unix()
+	return s1 + "/" + s2
+}
+
+func stripHrefPrefix(href string, prefix string) string {
+	u, _ := url.ParseRequestURI(href)
+	if u == nil {
+		return ""
+	}
+	name := u.Path
+	if strings.HasPrefix(name, prefix) {
+		name = name[len(prefix):]
+	}
+	i := strings.Index(name, "/")
+	if i >= 0 && i < len(name) - 1 {
+		return ""
+	}
+	if name == "" {
+		name = "./"
+	}
+	return name
+}
+
+func mapLine(s string) (m map[string]bool) {
+	m = make(map[string]bool)
+	elems := strings.Split(s, ",")
+	for _, e := range elems {
+		e = strings.TrimSpace(e)
+		if e != "" {
+			m[e] = true
+		}
+	}
+	return
+}
+
+func getHeader(h http.Header, key string) string {
+	key = http.CanonicalHeaderKey(key)
+	return strings.Join(h[key], ",")
+}
+
+func (d *DavError) Errno() fuse.Errno {
+	return fuse.Errno(d.Errnum)
+}
+
+func (d *DavError) Error() string {
+	return d.Message
 }
 
 func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (req *http.Request, err error) {
 	var body io.Reader
-	if len(b) > 0 {
+	if len(b) > 0 && b[0] != nil {
 		switch v := b[0].(type) {
 		case string:
 			body = strings.NewReader(v)
@@ -94,14 +203,7 @@ func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (
 			body = v.(io.Reader)
 		}
 	}
-	if method == "OPTIONS" && path == "*" {
-		req, err = http.NewRequest(method, d.Url + "/", body)
-		if req != nil {
-			req.URL.Path = "*"
-		}
-	} else {
-		req, err = http.NewRequest(method, d.Url + path, body)
-	}
+	req, err = http.NewRequest(method, d.Url + path, body)
 	if err != nil {
 		return
 	}
@@ -119,33 +221,59 @@ func (d *DavClient) request(method string, path string, b ...interface{}) (*http
 	return d.do(req)
 }
 
-func (d *DavClient) do(req *http.Request) (*http.Response, error) {
-	return d.cc.Do(req)
+func (d *DavClient) do(req *http.Request) (resp *http.Response, err error) {
+	resp, err = d.cc.Do(req)
+	if err == nil && !statusIsValid(resp) {
+		err2 := &DavError{
+			Message: resp.Status,
+			Code: resp.StatusCode,
+			Location: resp.Header.Get("Location"),
+		}
+		davToErrno(err2)
+		fmt.Printf("do: DavError: %+v\n", err2.Location)
+		err = err2
+	}
+	return
 }
 
 func (d *DavClient) Mount() (err error) {
 	if d.cc == nil {
 		d.cc = &http.Client{}
-		if !strings.HasSuffix(d.Url, "/") {
-			d.Url += "/"
-		}
+		d.Url = stripLastSlash(d.Url)
 		var u *url.URL
 		u, err = url.ParseRequestURI(d.Url)
 		if err != nil {
 			return
 		}
 		d.base = u.Path
-		if strings.HasSuffix(d.Url, "/") {
-			d.Url = d.Url[:len(d.Url)-1]
-		}
 	}
-	resp, err := d.request("OPTIONS", "*")
+	req, err := d.buildRequest("OPTIONS", "/")
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "*/*")
+	resp, err := d.do(req)
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
 	if !statusIsValid(resp) {
 		err = errors.New(resp.Status)
+		return
 	}
+
+	// Parse headers.
+	d.Methods = mapLine(getHeader(resp.Header, "Allow"))
+	d.DavSupport = mapLine(getHeader(resp.Header, "Dav"))
+	d.IsApache = strings.Index(resp.Header.Get("Server"), "Apache") >= 0
+	if d.DavSupport["sabredav-partialupdate"] {
+		d.IsSabre = true
+	}
+
+	if !d.DavSupport["1"] {
+		err = errors.New("not a webdav server")
+	}
+
 	return
 }
 
@@ -202,8 +330,15 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 		return
 	}
 
+	prefix := d.base + path
+	if depth == 0 {
+		prefix = dirName(prefix)
+		if prefix != "/" {
+			prefix += "/"
+		}
+	}
+
 	ret = make(map[string]*Props)
-	u := &url.URL{}
 	for _, respTag := range obj.Responses {
 		if respTag.Propstat == nil || respTag.Propstat.Props == nil {
 			err = errors.New("XML decode error")
@@ -211,22 +346,9 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 		}
 		props := respTag.Propstat.Props
 		props.Etag = stripQuotes(props.Etag)
-
-		var u2 *url.URL
-		u2, err = u.Parse(respTag.Href)
-		if u2 == nil {
-			continue
-		}
-		name := u2.Path
-		if len(d.base) > 0 && strings.HasPrefix(name, d.base) {
-			name = name[len(d.base):]
-		}
-		i := strings.Index(name, "/")
-		if i >= 0 && i < len(name) - 1 {
-			continue
-		}
+		name := stripHrefPrefix(respTag.Href, prefix)
 		if name == "" {
-			name = "./"
+			continue
 		}
 		props.Name = name
 		if strings.HasSuffix(name, "/") {
@@ -237,7 +359,33 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 	return
 }
 
+func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string) (ret map[string]*Props, err error) {
+	ret, err = d.PropFind(path, depth, props)
+
+	// did we get a redirect?
+	if daverr, ok := err.(*DavError); ok {
+		fmt.Printf("PropFindWithRedirect: to %s\n", daverr.Location)
+		if daverr.Location == "" {
+			return
+		}
+		url, err2 := url.ParseRequestURI(daverr.Location)
+		if err2 != nil {
+			fmt.Printf("Bad location\n")
+			return
+		}
+		// if it's just a "this is a directory" redirect, retry.
+		fmt.Printf("Compare %s and %s\n", url.Path, d.base + path + "/")
+		if url.Path == d.base + path + "/" {
+			fmt.Printf("Retry %s\n", path + "/")
+			ret, err = d.PropFind(path + "/", depth, props)
+		}
+	}
+	return
+}
+
 func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
+	path = addSlash(path)
+	fmt.Printf("Readdir %s\n", path)
 	props, err := d.PropFind(path, 1, nil)
 	if err != nil {
 		return
@@ -246,6 +394,9 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 		dir := strings.HasSuffix(name, "/")
 		if dir {
 			name = name[:len(name)-1]
+		}
+		if name == "._.DS_Store" || name == ".DS_Store" {
+			continue
 		}
 		n := Dnode{
 			Name: name,
@@ -262,24 +413,155 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 }
 
 func (d *DavClient) Stat(path string) (ret Dnode, err error) {
-	props, err := d.PropFind(path, 0, nil)
+	fmt.Printf("Stat %s\n", path)
+	props, err := d.PropFindWithRedirect(path, 0, nil)
 	if err != nil {
 		return
 	}
-	var p *Props
-	var ok bool
-	if p, ok = props[""]; !ok {
-		err = errors.New("404 Not Found")
+	if len(props) != 1 {
+		err = errors.New("500 PropFind error")
 		return
 	}
-	size, _ := strconv.ParseUint(p.ContentLength, 10, 64)
-	ret = Dnode{
-		Name: p.Name,
-		IsDir: p.ResourceType == "collection",
-		Mtime: parseTime(p.LastModified),
-		Ctime: parseTime(p.CreationDate),
-		Size: size,
-	} 
+	for _, p := range props {
+		size, _ := strconv.ParseUint(p.ContentLength, 10, 64)
+		ret = Dnode{
+			Name: p.Name,
+			IsDir: p.ResourceType == "collection",
+			Mtime: parseTime(p.LastModified),
+			Ctime: parseTime(p.CreationDate),
+			Size: size,
+		} 
+		return
+	}
+	return
+}
+
+func (d *DavClient) Get(path string) (data []byte, err error) {
+	return d.GetRange(path, -1, -1)
+}
+
+func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte, err error) {
+	fmt.Printf("READ %s %d %d\n", path, offset, length)
+	req, err := d.buildRequest("GET", path)
+	if err != nil {
+		return
+	}
+	if (offset >= 0 && length >= 0 ) {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset + int64(length) - 1))
+	}
+	fmt.Printf("req header: %+v\n", req.Header)
+	resp, err := d.do(req)
+	if err != nil {
+		fmt.Printf("READ ERROR %s\n", err)
+		return
+	}
+	if !statusIsValid(resp) {
+		err = errors.New(resp.Status)
+		fmt.Printf("READ ERROR %s\n", err)
+		return
+	}
+	fmt.Printf("resp header: %+v\n", resp.Header)
+	defer resp.Body.Close()
+	data, err = ioutil.ReadAll(resp.Body)
+	fmt.Printf("READ OK %d bytes\n", len(data))
+	if len(data) > length {
+		data = data[:length]
+	}
+	return
+}
+
+func (d *DavClient) Mkcol(path string) (err error) {
+	req, err := d.buildRequest("MKCOL", path)
+	if err != nil {
+		return
+	}
+	resp, err := d.do(req)
+	fmt.Printf("MKCOL reply %+v\n", resp.Header)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	return
+}
+
+func (d *DavClient) Delete(path string) (err error) {
+	req, err := d.buildRequest("DELETE", path)
+	if err != nil {
+		return
+	}
+	resp, err := d.do(req)
+	fmt.Printf("DELETE reply %+v\n", resp.Header)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	return
+}
+
+func (d *DavClient) Move(oldPath, newPath string) (err error) {
+	fmt.Printf("Move %s -> %s\n", oldPath, newPath)
+	req, err := d.buildRequest("MOVE", oldPath)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Destination", joinPath(d.Url, newPath))
+	resp, err := d.do(req)
+	fmt.Printf("MOVE reply %s %+v\n", resp.Status, resp.Header)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	return
+}
+
+func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (err error) {
+	fmt.Printf("ApachePutRange %d %d @ %s\n", offset, len(data), path)
+	req, err := d.buildRequest("PUT", path, data)
+
+	end := offset + int64(len(data)) - 1
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, end))
+
+	resp, err := d.do(req)
+	fmt.Printf("PUT reply %s %+v\n", resp.Status, resp.Header)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	return
+}
+
+func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (err error) {
+	fmt.Printf("sabrePutRange %d %d @ %s\n", offset, len(data), path)
+
+	req, err := d.buildRequest("PATCH", path, data)
+	end := offset + int64(len(data)) - 1
+
+	req.Header.Set("Content-Type", "application/x-sabredav-partialupdate")
+	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	req.Header.Set("X-Update-Range", fmt.Sprintf("bytes=%d-%d", offset, end))
+
+	resp, err := d.do(req)
+	fmt.Printf("PUT reply %s %+v\n", resp.Status, resp.Header)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	return
+}
+
+func (d *DavClient) PutRange(path string, data []byte, offset int64) (err error) {
+	if d.IsSabre {
+		return d.sabrePutRange(path, data, offset)
+	}
+	if d.IsApache {
+		return d.apachePutRange(path, data, offset)
+	}
+	err2 := &DavError{
+		Message: "405 Method Not Allowed",
+		Code: 405,
+	}
+	davToErrno(err2)
+	err = err2
 	return
 }
 
