@@ -45,11 +45,16 @@ type Dnode struct {
 
 type Props struct {
 	Name		string		`xml:"-"`
+	ResourceType_	ResourceType	`xml:"resourcetype"`
 	ResourceType	string		`xml:"-"`
 	CreationDate	string		`xml:"creationdate"`
 	LastModified	string		`xml:"getlastmodified"`
 	Etag		string		`xml:"getetag"`
 	ContentLength	string		`xml:"getcontentlength"`
+}
+
+type ResourceType struct {
+	Collection	*struct{}	`xml:"collection"`
 }
 
 type Propstat struct {
@@ -193,19 +198,26 @@ func (d *DavError) Error() string {
 
 func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (req *http.Request, err error) {
 	var body io.Reader
+	blen := 0
 	if len(b) > 0 && b[0] != nil {
 		switch v := b[0].(type) {
 		case string:
 			body = strings.NewReader(v)
+			blen = len(v)
 		case []byte:
 			body = bytes.NewReader(v)
+			blen = len(v)
 		default:
 			body = v.(io.Reader)
+			blen = -1
 		}
 	}
 	req, err = http.NewRequest(method, d.Url + path, body)
 	if err != nil {
 		return
+	}
+	if (blen >= 0) {
+		req.Header.Set("Content-Length", fmt.Sprintf("%d", blen))
 	}
 	if d.Username != "" || d.Password != "" {
 		req.SetBasicAuth(d.Username, d.Password)
@@ -235,7 +247,6 @@ func (d *DavClient) do(req *http.Request) (resp *http.Response, err error) {
 
 func (d *DavClient) Mount() (err error) {
 	if d.cc == nil {
-		d.cc = &http.Client{}
 		d.Url = stripLastSlash(d.Url)
 		var u *url.URL
 		u, err = url.ParseRequestURI(d.Url)
@@ -243,6 +254,19 @@ func (d *DavClient) Mount() (err error) {
 			return
 		}
 		d.base = u.Path
+
+		// Override some values from DefaultTransport.
+		tr := *(http.DefaultTransport.(*http.Transport))
+		tr.MaxIdleConnsPerHost = 4
+		tr.DisableCompression = true
+
+		d.cc = &http.Client{
+			Timeout: 60 * time.Second,
+			Transport: &tr,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 	req, err := d.buildRequest("OPTIONS", "/")
 	if err != nil {
@@ -315,7 +339,7 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 		return
 	}
 
-	// fmt.Printf("XXX c is %+v\n", string(contents))
+	// fmt.Printf("PROPFIND: %+v\n", string(contents))
 
 	obj := MultiStatus{}
 	err = xml.Unmarshal(contents, &obj)
@@ -348,7 +372,7 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 			continue
 		}
 		props.Name = name
-		if strings.HasSuffix(name, "/") {
+		if props.ResourceType_.Collection != nil {
 			props.ResourceType = "collection"
 		}
 		ret[name] = props
@@ -361,10 +385,10 @@ func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string)
 
 	// did we get a redirect?
 	if daverr, ok := err.(*DavError); ok {
-		fmt.Printf("PropFindWithRedirect: to %s\n", daverr.Location)
-		if daverr.Location == "" {
+		if daverr.Code / 100 != 3 || daverr.Location == "" {
 			return
 		}
+		fmt.Printf("PropFindWithRedirect: to %s\n", daverr.Location)
 		url, err2 := url.ParseRequestURI(daverr.Location)
 		if err2 != nil {
 			fmt.Printf("Bad location\n")
@@ -443,7 +467,9 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 	if err != nil {
 		return
 	}
+	partial := false
 	if (offset >= 0 && length >= 0 ) {
+		partial = true
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset + int64(length) - 1))
 	}
 	fmt.Printf("req header: %+v\n", req.Header)
@@ -452,9 +478,17 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 		fmt.Printf("READ ERROR %s\n", err)
 		return
 	}
+	fmt.Printf("resp header: %+v\n", resp.Header)
 	if !statusIsValid(resp) {
 		err = errors.New(resp.Status)
 		fmt.Printf("READ ERROR %s\n", err)
+		return
+	}
+	if partial && resp.StatusCode != 206 {
+		err = davToErrno(&DavError{
+			Message: "416 Range Not Satisfiable",
+			Code: 416,
+		})
 		return
 	}
 	fmt.Printf("resp header: %+v\n", resp.Header)
@@ -512,7 +546,7 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 }
 
 // https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
-func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (err error) {
+func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (created bool, err error) {
 	fmt.Printf("ApachePutRange %d %d @ %s\n", offset, len(data), path)
 	req, err := d.buildRequest("PUT", path, data)
 
@@ -528,12 +562,13 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (err 
 	if err != nil {
 		return
 	}
+	created = resp.StatusCode == 201
 	defer resp.Body.Close()
 	return
 }
 
 // http://sabre.io/dav/http-patch/
-func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (err error) {
+func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (created bool, err error) {
 	fmt.Printf("sabrePutRange %d %d @ %s\n", offset, len(data), path)
 
 	req, err := d.buildRequest("PATCH", path, data)
@@ -548,11 +583,12 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (err e
 	if err != nil {
 		return
 	}
+	created = resp.StatusCode == 201
 	defer resp.Body.Close()
 	return
 }
 
-func (d *DavClient) PutRange(path string, data []byte, offset int64) (err error) {
+func (d *DavClient) PutRange(path string, data []byte, offset int64) (created bool, err error) {
 	if d.IsSabre {
 		return d.sabrePutRange(path, data, offset)
 	}
@@ -566,13 +602,14 @@ func (d *DavClient) PutRange(path string, data []byte, offset int64) (err error)
 	return
 }
 
-func (d *DavClient) Put(path string, data []byte) (err error) {
+func (d *DavClient) Put(path string, data []byte) (created bool, err error) {
 	fmt.Printf("Put %d @ %s\n", len(data), path)
 	req, err := d.buildRequest("PUT", path, data)
 	resp, err := d.do(req)
 	if err != nil {
 		return
 	}
+	created = resp.StatusCode == 201
 	defer resp.Body.Close()
 	return
 }

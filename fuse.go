@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/context"
@@ -110,7 +111,7 @@ func (nf *NodeFile) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.
 }
 
 func (nf *NodeFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) (err error) {
-	err = nf.dav.PutRange(nf.Path, req.Data, req.Offset)
+	_, err = nf.dav.PutRange(nf.Path, req.Data, req.Offset)
 	if err == nil {
 		resp.Size = len(req.Data)
 		sz := uint64(req.Offset) + uint64(len(req.Data))
@@ -124,29 +125,27 @@ func (nf *NodeFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fus
 func (nf *NodeFile) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	// truncate if we need to.
 	trunc := flagSet(req.Flags, fuse.OpenTruncate)
-	if trunc {
-		err := nf.dav.Put(nf.Path, []byte{})
-		fmt.Printf("Open %s: truncate result %v\n", nf.Name, err)
-		if err != nil {
-			return nil, err
-		}
-		nf.Size = 0
-		return nf, nil
-	}
+	creat := flagSet(req.Flags, fuse.OpenCreate)
+	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
+	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
+	fmt.Printf("Open %s: trunc %v create %v read %v write %v\n", nf.Name, trunc, creat, read, write)
 
-	// is it there?
+	// we do not create here, so it should be present.
 	dnode, err := nf.dav.Stat(nf.Path)
-	fmt.Printf("Open %s: stat error %v\n", nf.Name, err)
 	if err == nil {
 		if dnode.Size == nf.Size && dnode.Mtime == nf.Mtime {
 			resp.Flags = fuse.OpenKeepCache
 		}
-		return nf, nil
 	}
 
-	// maybe create it.
-	if flagSet(req.Flags, fuse.OpenCreate) {
-		err = nf.dav.PutRange(nf.Path, []byte{}, 0)
+	// This is actually not called, truncating is
+	// done by calling Setattr with 0 size.
+	if trunc {
+		_, err := nf.dav.Put(nf.Path, []byte{})
+		if err != nil {
+			return nil, err
+		}
+		nf.Size = 0
 	}
 
 	if err != nil {
@@ -166,13 +165,13 @@ func (nf *NodeFile) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp 
 		fmt.Printf("Setattr %s %d\n", nf.Name, req.Size)
 		if req.Size == 0 {
 			if nf.Size > 0 {
-				err = nf.dav.Put(nf.Path, []byte{})
+				_, err = nf.dav.Put(nf.Path, []byte{})
 				if err != nil {
 					return
 				}
 			}
 		} else if req.Size >= nf.Size {
-			err = nf.dav.PutRange(nf.Path, []byte{}, int64(req.Size))
+			_, err = nf.dav.PutRange(nf.Path, []byte{}, int64(req.Size))
 			if err != nil {
 				return
 			}
@@ -205,9 +204,24 @@ func (nf *NodeFile) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp 
 }
 
 func (nd *NodeDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (node fs.Node, handle fs.Handle, err error) {
+	trunc := flagSet(req.Flags, fuse.OpenTruncate)
+	creat := flagSet(req.Flags, fuse.OpenCreate)
+	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
+	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
+	excl  := flagSet(req.Flags, fuse.OpenExclusive)
+	fmt.Printf("Create %s: trunc %v create %v read %v write %v excl %v\n", req.Name, trunc, creat, read, write, excl)
 	path := joinPath(nd.Path, req.Name)
-	err = nd.dav.PutRange(path, []byte{}, 0)
+	created := false
+	if trunc {
+		created, err = nd.dav.Put(path, []byte{})
+	} else {
+		created, err = nd.dav.PutRange(path, []byte{}, 0)
+	}
 	if err != nil {
+		return
+	}
+	if excl && !created {
+		err = fuse.EEXIST
 		return
 	}
 	dnode, err := nd.dav.Stat(path)
@@ -260,6 +274,18 @@ func (nd *NodeDir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir f
 
 func (nd *NodeDir) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error) {
 	path := joinPath(nd.Path, req.Name)
+	props, err := nd.dav.PropFindWithRedirect(path, 1, nil)
+	if err != nil {
+		return
+	}
+	if len(props) != 1 {
+		return fuse.Errno(syscall.ENOTEMPTY)
+	}
+	for _, p := range props {
+		if p.ResourceType == "collection" {
+			path += "/"
+		}
+	}
 	err = nd.dav.Delete(path)
 	return
 }
