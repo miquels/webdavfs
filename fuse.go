@@ -122,14 +122,33 @@ func (nf *NodeFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fus
 }
 
 func (nf *NodeFile) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	dnode, err := nf.dav.Stat(nf.Path)
-	fmt.Printf("Open: create %v, stat result %v\n", flagSet(req.Flags, fuse.OpenCreate), err)
-	if err == nil && dnode.Size == nf.Size && dnode.Mtime == nf.Mtime {
-		resp.Flags = fuse.OpenKeepCache
+	// truncate if we need to.
+	trunc := flagSet(req.Flags, fuse.OpenTruncate)
+	if trunc {
+		err := nf.dav.Put(nf.Path, []byte{})
+		fmt.Printf("Open %s: truncate result %v\n", nf.Name, err)
+		if err != nil {
+			return nil, err
+		}
+		nf.Size = 0
+		return nf, nil
 	}
-	if err != nil && flagSet(req.Flags, fuse.OpenCreate) {
+
+	// is it there?
+	dnode, err := nf.dav.Stat(nf.Path)
+	fmt.Printf("Open %s: stat error %v\n", nf.Name, err)
+	if err == nil {
+		if dnode.Size == nf.Size && dnode.Mtime == nf.Mtime {
+			resp.Flags = fuse.OpenKeepCache
+		}
+		return nf, nil
+	}
+
+	// maybe create it.
+	if flagSet(req.Flags, fuse.OpenCreate) {
 		err = nf.dav.PutRange(nf.Path, []byte{}, 0)
 	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +163,23 @@ func (nf *NodeFile) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp 
 		return fuse.EPERM
 	}
 	if attrSet(v, fuse.SetattrSize) {
+		fmt.Printf("Setattr %s %d\n", nf.Name, req.Size)
+		if req.Size == 0 {
+			if nf.Size > 0 {
+				err = nf.dav.Put(nf.Path, []byte{})
+				if err != nil {
+					return
+				}
+			}
+		} else if req.Size >= nf.Size {
+			err = nf.dav.PutRange(nf.Path, []byte{}, int64(req.Size))
+			if err != nil {
+				return
+			}
+		} else {
+			err = fuse.ERANGE
+			return
+		}
 		nf.Size = req.Size
 	}
 	// if attrSet(v, fuse.SetattrAtime) {

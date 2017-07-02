@@ -78,13 +78,13 @@ var davToErrnoMap = map[int]syscall.Errno{
 	504:	syscall.ETIMEDOUT,
 }
 
-func davToErrno(err *DavError) {
+func davToErrno(err *DavError) (*DavError) {
 	if fe, ok := davToErrnoMap[err.Code]; ok {
 		err.Errnum = fe
-		return
+		return err
 	}
 	err.Errnum = syscall.EIO
-	return
+	return err
 }
 
 func statusIsValid(resp *http.Response) bool {
@@ -224,14 +224,11 @@ func (d *DavClient) request(method string, path string, b ...interface{}) (*http
 func (d *DavClient) do(req *http.Request) (resp *http.Response, err error) {
 	resp, err = d.cc.Do(req)
 	if err == nil && !statusIsValid(resp) {
-		err2 := &DavError{
+		err = davToErrno(&DavError{
 			Message: resp.Status,
 			Code: resp.StatusCode,
 			Location: resp.Header.Get("Location"),
-		}
-		davToErrno(err2)
-		fmt.Printf("do: DavError: %+v\n", err2.Location)
-		err = err2
+		})
 	}
 	return
 }
@@ -514,12 +511,17 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 	return
 }
 
+// https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
 func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (err error) {
 	fmt.Printf("ApachePutRange %d %d @ %s\n", offset, len(data), path)
 	req, err := d.buildRequest("PUT", path, data)
 
 	end := offset + int64(len(data)) - 1
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, end))
+	if end < 0 {
+		end = 0
+	}
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", offset, end))
+	fmt.Printf("PUT req %+v\n", req.Header)
 
 	resp, err := d.do(req)
 	fmt.Printf("PUT reply %s %+v\n", resp.Status, resp.Header)
@@ -530,6 +532,7 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (err 
 	return
 }
 
+// http://sabre.io/dav/http-patch/
 func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (err error) {
 	fmt.Printf("sabrePutRange %d %d @ %s\n", offset, len(data), path)
 
@@ -556,12 +559,21 @@ func (d *DavClient) PutRange(path string, data []byte, offset int64) (err error)
 	if d.IsApache {
 		return d.apachePutRange(path, data, offset)
 	}
-	err2 := &DavError{
+	err = davToErrno(&DavError{
 		Message: "405 Method Not Allowed",
 		Code: 405,
+	})
+	return
+}
+
+func (d *DavClient) Put(path string, data []byte) (err error) {
+	fmt.Printf("Put %d @ %s\n", len(data), path)
+	req, err := d.buildRequest("PUT", path, data)
+	resp, err := d.do(req)
+	if err != nil {
+		return
 	}
-	davToErrno(err2)
-	err = err2
+	defer resp.Body.Close()
 	return
 }
 
