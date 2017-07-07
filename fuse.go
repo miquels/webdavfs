@@ -91,9 +91,9 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 		if srcDirPath == dstDirPath {
 			newLock1 = nd
 		} else if strings.HasPrefix(srcDirPath, dstDirPath) {
-			newLock1 = nd
-		} else if strings.HasPrefix(dstDirPath, srcDirPath) {
 			newLock1 = destNode
+		} else if strings.HasPrefix(dstDirPath, srcDirPath) {
+			newLock1 = nd
 		} else {
 			newLock1 = nd
 			newLock2 = destNode
@@ -104,7 +104,9 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 				break
 			}
 			lock1.decMetaRef()
-			lock2.decMetaRef()
+			if lock2 != nil {
+				lock2.decMetaRef()
+			}
 		}
 		first = false
 
@@ -180,8 +182,12 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 	return
 }
 
+// XXX consider doing nothing if called within 1 second of Lookup().
 func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
-	// XXX consider doing nothing if called within 1 second of Lookup().
+	if nd.Deleted {
+		err = fuse.Errno(syscall.ESTALE)
+		return
+	}
 	nd.incIoRef()
 	fmt.Printf("Getattr %s (%s)\n", nd.Name, nd.getPath())
 	dnode, err := dav.Stat(nd.getPath())
@@ -192,6 +198,7 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 			fmt.Printf("DBG huh isdir %v != isdir %v\n", dnode.IsDir, nd.IsDir)
 			err = fuse.Errno(syscall.ESTALE)
 		} else {
+			nd.Dnode = dnode
 			mode := os.FileMode(0644)
 			if dnode.IsDir {
 				mode = os.FileMode(0755 | os.ModeDir)
@@ -213,7 +220,7 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 				Gid: 0,
 				BlockSize: 4096,
 			}
-			fmt.Printf("DBG return stat: %+v", attr)
+			fmt.Printf("DBG return stat: %+v\n", attr)
 		}
 	} else {
 		fmt.Printf("stat failed %v\n", err)
@@ -323,6 +330,10 @@ func (nd *Node) ftruncate(ctx context.Context, size uint64) (err error) {
 }
 
 func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) (err error) {
+	if nd.Deleted {
+		err = fuse.Errno(syscall.ESTALE)
+		return
+	}
 	v := req.Valid
 	if attrSet(v, fuse.SetattrMode) ||
 	   attrSet(v, fuse.SetattrUid) ||
@@ -369,7 +380,11 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	return
 }
 
-func (nf *Node) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
+func (nf *Node) Fsync(ctx context.Context, req *fuse.FsyncRequest) (err error) {
+	if nf.Deleted {
+		err = fuse.Errno(syscall.ESTALE)
+		return
+	}
 	return nil
 }
 
