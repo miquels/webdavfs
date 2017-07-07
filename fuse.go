@@ -127,20 +127,7 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 	}
 	nd.Lock()
 	if err == nil {
-		var n *Node
-		if nd.Child != nil {
-			n = nd.Child[req.OldName]
-			delete(nd.Child, req.OldName)
-		}
-		if n != nil {
-			// XXX FIXME check if destNode.Child[req.NewName]
-			// already exists- if so we need to mark it deleted.
-			if destNode.Child == nil {
-				destNode.Child = map[string]*Node{}
-			}
-			destNode.Child[req.NewName] = n
-			n.Name = req.NewName
-		}
+		nd.moveNode(destNode, req.OldName, req.NewName)
 	}
 	lock1.decMetaRef()
 	if lock2 != nil {
@@ -185,14 +172,8 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 		err = dav.Delete(path)
 	}
 	nd.Lock()
-	if err == nil && nd.Child != nil {
-		n := nd.Child[req.Name]
-		if n != nil {
-			n.Deleted = true
-			n.Name = n.Name + " (deleted)"
-			fmt.Printf("DBG mark as deleted %s\n", n.Name)
-			delete(nd.Child, req.Name)
-		}
+	if err == nil {
+		nd.delNode(req.Name)
 	}
 	nd.decMetaRef()
 	nd.Unlock()

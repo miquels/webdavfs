@@ -197,6 +197,10 @@ func (d *DavError) Error() string {
 }
 
 func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (req *http.Request, err error) {
+	if len(path) == 0 || path[0] != '/' {
+		err = errors.New("path does not start with /")
+		return
+	}
 	var body io.Reader
 	blen := 0
 	if len(b) > 0 && b[0] != nil {
@@ -536,6 +540,11 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 	if err != nil {
 		return
 	}
+	if oldPath[len(oldPath)-1] == '/' {
+		req.Header.Set("Overwrite", "F")
+	} else {
+		req.Header.Set("Overwrite", "T")
+	}
 	req.Header.Set("Destination", joinPath(d.Url, newPath))
 	resp, err := d.do(req)
 	fmt.Printf("MOVE reply %s %+v\n", resp.Status, resp.Header)
@@ -555,6 +564,7 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (crea
 	if end < 0 {
 		end = 0
 	}
+	req.Header.Set("If-Match", "*")
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", offset, end))
 	fmt.Printf("PUT req %+v\n", req.Header)
 
@@ -577,6 +587,7 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (creat
 
 	req.Header.Set("Content-Type", "application/x-sabredav-partialupdate")
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	req.Header.Set("If-Match", "*")
 	req.Header.Set("X-Update-Range", fmt.Sprintf("bytes=%d-%d", offset, end))
 
 	resp, err := d.do(req)
