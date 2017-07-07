@@ -412,10 +412,11 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 		return
 	}
 	for name, p := range props {
-		dir := strings.HasSuffix(name, "/")
-		if dir {
-			name = name[:len(name)-1]
+		name = stripLastSlash(name)
+		if strings.Index(name, "/") >= 0 {
+			continue
 		}
+		fmt.Printf("DBG Readdir add name [%s]\n", name)
 		if name == "._.DS_Store" || name == ".DS_Store" {
 			continue
 		}
@@ -446,7 +447,7 @@ func (d *DavClient) Stat(path string) (ret Dnode, err error) {
 	for _, p := range props {
 		size, _ := strconv.ParseUint(p.ContentLength, 10, 64)
 		ret = Dnode{
-			Name: p.Name,
+			Name: stripLastSlash(p.Name),
 			IsDir: p.ResourceType == "collection",
 			Mtime: parseTime(p.LastModified),
 			Ctime: parseTime(p.CreationDate),
