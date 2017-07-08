@@ -2,7 +2,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -117,6 +116,8 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 		}
 	}
 
+	dbgPrintf("fuse: Rename %s -> %s\n", oldPath, newPath)
+
 	// Stat and if found, move
 	nd.Unlock()
 	dnode, err := dav.Stat(oldPath)
@@ -189,13 +190,13 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		return
 	}
 	nd.incIoRef()
-	fmt.Printf("Getattr %s (%s)\n", nd.Name, nd.getPath())
+	dbgPrintf("fuse: Getattr %s (%s)\n", nd.Name, nd.getPath())
 	dnode, err := dav.Stat(nd.getPath())
 	if err == nil {
 		if nd.Name != "" && dnode.IsDir != nd.IsDir {
 			// XXX FIXME file changed to dir or vice versa ...
 			// mark whole node stale, refuse i/o operations
-			fmt.Printf("DBG huh isdir %v != isdir %v\n", dnode.IsDir, nd.IsDir)
+			dbgPrintf("fuse: Getattr %s isdir %v != isdir %v\n", dnode.Name, dnode.IsDir, nd.IsDir)
 			err = fuse.Errno(syscall.ESTALE)
 		} else {
 			nd.Dnode = dnode
@@ -220,25 +221,25 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 				Gid: 0,
 				BlockSize: 4096,
 			}
-			fmt.Printf("DBG return stat: %+v\n", attr)
+			// dbgPrintf("fuse: Getattr: return stat: %+v\n", attr)
 		}
 	} else {
-		fmt.Printf("stat failed %v\n", err)
+		// dbgPrintf("fuse: Getattr: stat failed %v\n", err)
 	}
 	nd.decIoRef()
 	return
 }
 
 func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error) {
-	fmt.Printf("Lookup %s\n", name)
+	dbgPrintf("fuse: Lookup %s in %s\n", name, nd.Name)
 	nd.incIoRef()
 	path := joinPath(nd.getPath(), name)
 	dnode, err := dav.Stat(path)
 	if err == nil {
-		fmt.Printf("Lookup %s ok add %s\n", path, dnode.Name)
+		dbgPrintf("fuse: Lookup %s ok add %s\n", path, dnode.Name)
 		rn = nd.addNode(dnode)
 	} else {
-		fmt.Printf("Lookup %s failed: %s\n", path, err)
+		dbgPrintf("fuse: Lookup %s failed: %s\n", path, err)
 	}
 	nd.decIoRef()
 	return
@@ -275,7 +276,7 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
 	excl  := flagSet(req.Flags, fuse.OpenExclusive)
-	fmt.Printf("Create %s: trunc %v create %v read %v write %v excl %v\n", req.Name, trunc, creat, read, write, excl)
+	dbgPrintf("fuse: Create %s: trunc %v create %v read %v write %v excl %v\n", req.Name, trunc, creat, read, write, excl)
 	path = joinPath(path, req.Name)
 	created := false
 	if trunc {
@@ -338,7 +339,7 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 
 	if attrSet(v, fuse.SetattrSize) {
-		fmt.Printf("Setattr %s: size %d\n", nd.Name, req.Size)
+		// dbgPrintf("fuse: Setattr %s: size %d\n", nd.Name, req.Size)
 		err = nd.ftruncate(ctx, req.Size)
 		if err != nil {
 			return
@@ -401,11 +402,13 @@ func (nf *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Read
 
 func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) (err error) {
 	if nf.Deleted {
+		dbgPrintf("fuse: Write: %s (node @ %p) DELETED\n", nf.Name, nf)
 		err = fuse.Errno(syscall.ESTALE)
 		return
 	}
 	nf.incIoRef()
 	path := nf.getPath()
+	dbgPrintf("fuse: Write: %s (node @ %p)\n", path, nf)
 	_, err = dav.PutRange(path, req.Data, req.Offset)
 	if err == nil {
 		resp.Size = len(req.Data)
@@ -415,6 +418,8 @@ func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wr
 			nf.Size = sz
 		}
 		nf.Unlock()
+	} else {
+		dbgPrintf("fuse: Write: failed: %v\n", err)
 	}
 	nf.decIoRef()
 	return
@@ -429,7 +434,7 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	creat := flagSet(req.Flags, fuse.OpenCreate)
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
-	fmt.Printf("Open %s: trunc %v create %v read %v write %v\n", nf.Name, trunc, creat, read, write)
+	dbgPrintf("fuse: Open %s: trunc %v create %v read %v write %v\n", nf.Name, trunc, creat, read, write)
 
 	nf.incIoRef()
 	path := nf.getPath()
