@@ -61,8 +61,7 @@ func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node,
 			Ctime: now,
 			IsDir: true,
 		}
-		n := nd.addNode(nn)
-		n.Atime = now
+		n := nd.addNode(nn, true)
 		ret = n
 	}
 	nd.decMetaRef()
@@ -205,13 +204,12 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 	nd.incIoRef()
 
-	// see if we have a Dnode cached, if not, call dav.Stat()
-	dnode, cached := nd.getCachedDnode("")
-	if !cached {
+	dnode := nd.Dnode
+	if !nd.statInfoFresh() {
 		dbgPrintf("fuse: Getattr %s (%s)\n", nd.Name, nd.getPath())
 		dnode, err = dav.Stat(nd.getPath())
 		if err == nil {
-			nd.lastStatNow()
+			nd.statInfoTouch()
 		}
 	} else {
 		dbgPrintf("fuse: Getattr %s (%s) (cached)\n", nd.Name, nd.getPath())
@@ -222,7 +220,7 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		// Sanity check.
 		if nd.Name != "" && dnode.IsDir != nd.IsDir {
 			dbgPrintf("fuse: Getattr %s isdir %v != isdir %v\n", dnode.Name, dnode.IsDir, nd.IsDir)
-			nd.lastStatInvalid()
+			nd.invalidateThisNode()
 			err = fuse.Errno(syscall.ESTALE)
 		} else {
 			// All well, build fuse.Attr.
@@ -260,30 +258,28 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error) {
 	dbgPrintf("fuse: Lookup %s in %s\n", name, nd.Name)
 	nd.incIoRef()
-	var updateTime time.Time
+	defer nd.decIoRef()
 
-	// do we have a recent entry in the cache?
+	// do we have a recent entry available?
 	nd.Lock()
-	dnode, cached := nd.getCachedDnode(name)
-	if cached {
-		updateTime = nd.DirCacheTime
-	}
+	nn := nd.getNode(name)
+	valid := nn != nil && nn.statInfoFresh()
 	nd.Unlock()
-
-	// if not, call Stat()
-	if !cached {
-		path := joinPath(nd.getPath(), name)
-		dnode, err = dav.Stat(path)
-		updateTime = time.Now()
+	if valid {
+		rn = nn
+		return
 	}
+
+	// need to call stat
+	path := joinPath(nd.getPath(), name)
+	dnode, err := dav.Stat(path)
 
 	if err == nil {
 		dbgPrintf("fuse: Lookup ok add %s\n", name)
-		node := nd.addNode(dnode)
-		nd.lastStatAt(updateTime)
+		node := nd.addNode(dnode, true)
 		rn = node
 	} else {
-		dbgPrintf("fuse: Lookup %d failed: %s\n", name, err)
+		dbgPrintf("fuse: Lookup %s failed: %s\n", name, err)
 	}
 	nd.decIoRef()
 	return
@@ -296,7 +292,16 @@ func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 	dirs, err := dav.Readdir(path, true)
 	if err == nil {
 		nd.Lock()
-		nd.addCachedDnodes(dirs)
+		seen := map[string]bool{}
+		for _, d := range dirs {
+			nd.addNode(d, false)
+			seen[d.Name] = true
+		}
+		for _, x := range nd.Child {
+			if !seen[x.Name] {
+				x.invalidateThisNode()
+			}
+		}
 		nd.Unlock()
 	}
 	nd.decIoRef()
@@ -344,9 +349,11 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	if err == nil {
 		dnode, err := dav.Stat(path)
 		if err == nil {
-			n := nd.addNode(dnode)
+			n := nd.addNode(dnode, true)
 			node = n
 			handle = n
+		} else {
+			nd.invalidateNode(req.Name)
 		}
 	}
 	nd.Lock()
@@ -500,6 +507,7 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	if nf.IsDir {
 		return nf, nil
 	}
+
 	// truncate if we need to.
 	trunc := flagSet(req.Flags, fuse.OpenTruncate)
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
@@ -509,25 +517,24 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	nf.incIoRef()
 	path := nf.getPath()
 
-	// See if cache is still valid.
+	// See if kernel cache is still valid.
 	dnode, err := dav.Stat(path)
 	if err == nil {
 		nf.Lock()
 		nf.Dnode = dnode
-		nf.lastStatNow()
+		nf.statInfoTouch()
 		if dnode.Size == nf.Size && dnode.Mtime == nf.Mtime {
 			resp.Flags = fuse.OpenKeepCache
 		}
 		nf.Unlock()
-	}
-	err = nil
 
-	// This is actually not called, truncating is
-	// done by calling Setattr with 0 size.
-	if trunc {
-		_, err = dav.Put(path, []byte{}, false, false)
-		if err == nil {
-			nf.Size = 0
+		// This is actually not called, truncating is
+		// done by calling Setattr with 0 size.
+		if trunc {
+			_, err = dav.Put(path, []byte{}, false, false)
+			if err == nil {
+				nf.Size = 0
+			}
 		}
 	}
 

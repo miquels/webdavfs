@@ -25,6 +25,7 @@ type Node struct {
 	Deleted		bool
 	Parent		*Node
 	Child		map[string]*Node
+	InUse		bool
 }
 
 var rootNode = &Node{
@@ -49,9 +50,13 @@ func (nd *Node) Unlock() {
 	nodeMutex.Unlock()
 }
 
-func (nd *Node) addNode(d Dnode) *Node {
+func (nd *Node) addNode(d Dnode, really bool) *Node {
 	n := nd.Child[d.Name]
 	if n != nil {
+		if really {
+			n.InUse = true
+		}
+		n.LastStat = time.Now()
 		n.Dnode = d
 		return n
 	}
@@ -59,6 +64,8 @@ func (nd *Node) addNode(d Dnode) *Node {
 		Inode: inodeCounter,
 		Dnode: d,
 		Parent: nd,
+		InUse: really,
+		LastStat: time.Now(),
 	}
 	if d.IsDir {
 		nn.Child = map[string]*Node{}
@@ -110,6 +117,29 @@ func (nd *Node) getNode(name string) *Node {
 		return nd.Child[name]
 	}
 	return nil
+}
+
+func (nd *Node) deleteUnusedChildren() {
+	for name, nn := range nd.Child {
+		nn.deleteUnusedChildren()
+		if !nn.InUse && len(nn.Child) == 0 {
+			delete(nd.Child, name)
+		}
+	}
+}
+
+func (nd *Node) invalidateThisNode() {
+	nd.deleteUnusedChildren()
+	if !nd.InUse && len(nd.Child) == 0 {
+		nd.Forget()
+	}
+}
+
+func (nd *Node) invalidateNode(name string) {
+	nn := nd.Child[name]
+	if nn != nil {
+		nn.invalidateThisNode()
+	}
 }
 
 func lookupNode(path string) (de *Node) {
