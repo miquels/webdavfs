@@ -38,12 +38,6 @@ func NewFS(d *DavClient) *FS {
 }
 
 func (fs *FS) Root() (fs.Node, error) {
-	/*
-	dnode, err := dav.Stat("/")
-	if err == nil {
-		fs.root.Dnode = dnode
-	}
-	*/
 	return fs.root, nil
 }
 
@@ -398,10 +392,12 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		err = fuse.Errno(syscall.ESTALE)
 		return
 	}
+	invalid := fuse.SetattrMode | fuse. SetattrUid | fuse.SetattrGid |
+		fuse.SetattrMtime | fuse.SetattrHandle | fuse.SetattrMtimeNow |
+		fuse.SetattrLockOwner | fuse.SetattrCrtime | fuse.SetattrChgtime |
+		fuse.SetattrBkuptime | fuse.SetattrFlags
 	v := req.Valid
-	if attrSet(v, fuse.SetattrMode) ||
-	   attrSet(v, fuse.SetattrUid) ||
-	   attrSet(v, fuse.SetattrGid) {
+	if attrSet(v, invalid) {
 		return fuse.EPERM
 	}
 
@@ -417,10 +413,8 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	if attrSet(v, fuse.SetattrAtime) {
 		nd.Atime = req.Atime
 	}
-	if attrSet(v, fuse.SetattrMtime){
-		// XXX FIXME if req.Mtime is around "now", perhaps
-		// do a 0-byte range put to "touch" the file.
-		nd.Mtime = req.Mtime
+	if attrSet(v, fuse.SetattrAtimeNow) {
+		nd.Atime = time.Now()
 	}
 	attr := fuse.Attr{
 		Valid: attrValidTime,
