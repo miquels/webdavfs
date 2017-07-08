@@ -301,16 +301,12 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 }
 
 
-func (nd *Node) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+func (nd *Node) Forget() {
 	// XXX FIXME add some sanity checks here-
 	// see if refcnt == 0, subdirs are gone
 	nd.Lock()
-	fmt.Printf("Release %s\n", nd.getPath())
-	if nd.Parent != nil {
-		delete(nd.Parent.Child, nd.Name)
-	}
+	nd.forgetNode()
 	nd.Unlock()
-	return nil
 }
 
 func (nd *Node) ftruncate(ctx context.Context, size uint64) (err error) {
