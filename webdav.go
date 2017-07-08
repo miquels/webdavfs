@@ -343,7 +343,7 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 		return
 	}
 
-	// fmt.Printf("PROPFIND: %+v\n", string(contents))
+	// dbgPrintf("PROPFIND: %+v\n", string(contents))
 
 	obj := MultiStatus{}
 	err = xml.Unmarshal(contents, &obj)
@@ -392,16 +392,16 @@ func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string)
 		if daverr.Code / 100 != 3 || daverr.Location == "" {
 			return
 		}
-		fmt.Printf("PropFindWithRedirect: to %s\n", daverr.Location)
+		// dbgPrintf("PropFindWithRedirect: to %s\n", daverr.Location)
 		url, err2 := url.ParseRequestURI(daverr.Location)
 		if err2 != nil {
-			fmt.Printf("Bad location\n")
+			// dbgPrintf("Bad location\n")
 			return
 		}
 		// if it's just a "this is a directory" redirect, retry.
-		fmt.Printf("Compare %s and %s\n", url.Path, d.base + path + "/")
+		// dbgPrintf("Compare %s and %s\n", url.Path, d.base + path + "/")
 		if url.Path == d.base + path + "/" {
-			fmt.Printf("Retry %s\n", path + "/")
+			// dbgPrintf("Retry %s\n", path + "/")
 			ret, err = d.PropFind(path + "/", depth, props)
 		}
 	}
@@ -410,7 +410,7 @@ func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string)
 
 func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 	path = addSlash(path)
-	fmt.Printf("Readdir %s\n", path)
+	// dbgPrintf("Readdir %s\n", path)
 	props, err := d.PropFind(path, 1, nil)
 	if err != nil {
 		return
@@ -420,7 +420,7 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 		if strings.Index(name, "/") >= 0 {
 			continue
 		}
-		fmt.Printf("DBG Readdir add name [%s]\n", name)
+		// dbgPrintf("DBG Readdir add name [%s]\n", name)
 		if name == "._.DS_Store" || name == ".DS_Store" {
 			continue
 		}
@@ -439,7 +439,7 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 }
 
 func (d *DavClient) Stat(path string) (ret Dnode, err error) {
-	fmt.Printf("Stat %s\n", path)
+	dbgPrintf("webdav: Stat %s\n", path)
 	props, err := d.PropFindWithRedirect(path, 0, nil)
 	if err != nil {
 		return
@@ -467,7 +467,7 @@ func (d *DavClient) Get(path string) (data []byte, err error) {
 }
 
 func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte, err error) {
-	fmt.Printf("READ %s %d %d\n", path, offset, length)
+	dbgPrintf("webdav: GetRange %s %d %d\n", path, offset, length)
 	req, err := d.buildRequest("GET", path)
 	if err != nil {
 		return
@@ -477,16 +477,16 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 		partial = true
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset + int64(length) - 1))
 	}
-	fmt.Printf("req header: %+v\n", req.Header)
+	// dbgPrintf("webdav: GetRange: req header: %+v\n", req.Header)
 	resp, err := d.do(req)
 	if err != nil {
-		fmt.Printf("READ ERROR %s\n", err)
+		dbgPrintf("webdav: GetRange: READ ERROR %s\n", err)
 		return
 	}
-	fmt.Printf("resp header: %+v\n", resp.Header)
+	// dbgPrintf("webdav: GetRange: resp header: %+v\n", resp.Header)
 	if !statusIsValid(resp) {
 		err = errors.New(resp.Status)
-		fmt.Printf("READ ERROR %s\n", err)
+		dbgPrintf("webdav: GetRange: READ ERROR %s\n", err)
 		return
 	}
 	if partial && resp.StatusCode != 206 {
@@ -496,10 +496,10 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 		})
 		return
 	}
-	fmt.Printf("resp header: %+v\n", resp.Header)
+	// dbgPrintf("webdav: GetRange: resp header: %+v\n", resp.Header)
 	defer resp.Body.Close()
 	data, err = ioutil.ReadAll(resp.Body)
-	fmt.Printf("READ OK %d bytes\n", len(data))
+	// dbgPrintf("webdav: GetRange: READ OK %d bytes\n", len(data))
 	if len(data) > length {
 		data = data[:length]
 	}
@@ -512,7 +512,7 @@ func (d *DavClient) Mkcol(path string) (err error) {
 		return
 	}
 	resp, err := d.do(req)
-	fmt.Printf("MKCOL reply %+v\n", resp.Header)
+	// dbgPrintf("webdav: Mkcol: reply %+v\n", resp.Header)
 	if err != nil {
 		return
 	}
@@ -526,7 +526,7 @@ func (d *DavClient) Delete(path string) (err error) {
 		return
 	}
 	resp, err := d.do(req)
-	fmt.Printf("DELETE reply %+v\n", resp.Header)
+	// dbgPrintf("webdav: Delete reply %+v\n", resp.Header)
 	if err != nil {
 		return
 	}
@@ -535,7 +535,7 @@ func (d *DavClient) Delete(path string) (err error) {
 }
 
 func (d *DavClient) Move(oldPath, newPath string) (err error) {
-	fmt.Printf("Move %s -> %s\n", oldPath, newPath)
+	dbgPrintf("webdav: Move: %s -> %s\n", oldPath, newPath)
 	req, err := d.buildRequest("MOVE", oldPath)
 	if err != nil {
 		return
@@ -547,7 +547,7 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 	}
 	req.Header.Set("Destination", joinPath(d.Url, newPath))
 	resp, err := d.do(req)
-	fmt.Printf("MOVE reply %s %+v\n", resp.Status, resp.Header)
+	dbgPrintf("webdav: Move: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
@@ -557,7 +557,7 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 
 // https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
 func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (created bool, err error) {
-	fmt.Printf("ApachePutRange %d %d @ %s\n", offset, len(data), path)
+	// dbgPrintf("webdav: apachePutRange %d %d @ %s\n", offset, len(data), path)
 	req, err := d.buildRequest("PUT", path, data)
 
 	end := offset + int64(len(data)) - 1
@@ -566,10 +566,10 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (crea
 	}
 	req.Header.Set("If-Match", "*")
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", offset, end))
-	fmt.Printf("PUT req %+v\n", req.Header)
+	// dbgPrintf("webdav: apachePutRange: req.header %+v\n", req.Header)
 
 	resp, err := d.do(req)
-	fmt.Printf("PUT reply %s %+v\n", resp.Status, resp.Header)
+	// dbgPrintf("webdav: apachePutRange: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
@@ -580,7 +580,7 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64) (crea
 
 // http://sabre.io/dav/http-patch/
 func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (created bool, err error) {
-	fmt.Printf("sabrePutRange %d %d @ %s\n", offset, len(data), path)
+	// dbgPrintf("webdav: sabrePutRange: %d %d @ %s\n", offset, len(data), path)
 
 	req, err := d.buildRequest("PATCH", path, data)
 	end := offset + int64(len(data)) - 1
@@ -591,7 +591,7 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64) (creat
 	req.Header.Set("X-Update-Range", fmt.Sprintf("bytes=%d-%d", offset, end))
 
 	resp, err := d.do(req)
-	fmt.Printf("PUT reply %s %+v\n", resp.Status, resp.Header)
+	// dbgPrintf("webdav: sabrePutRange: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
@@ -615,7 +615,7 @@ func (d *DavClient) PutRange(path string, data []byte, offset int64) (created bo
 }
 
 func (d *DavClient) Put(path string, data []byte) (created bool, err error) {
-	fmt.Printf("Put %d @ %s\n", len(data), path)
+	// dbgPrintf("webdav: Put: %d @ %s\n", len(data), path)
 	req, err := d.buildRequest("PUT", path, data)
 	resp, err := d.do(req)
 	if err != nil {
