@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	dirCacheTime   = 10 * time.Second
 	statCacheTime  = 1 * time.Second
 	attrValidTime  = 1 * time.Minute
 	entryValidTime = 1 * time.Minute
@@ -196,31 +197,35 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 	return
 }
 
-// XXX consider doing nothing if called within 1 second of Lookup(), Open(), Create()
 func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 	if nd.Deleted {
 		err = fuse.Errno(syscall.ESTALE)
 		return
 	}
+
 	nd.incIoRef()
-	dbgPrintf("fuse: Getattr %s (%s)\n", nd.Name, nd.getPath())
-	dnode := nd.Dnode
-	now := time.Now()
-	if nd.LastStat.Add(statCacheTime).Before(now) {
+
+	// see if we have a Dnode cached, if not, call dav.Stat()
+	dnode, cached := nd.getCachedDnode("")
+	if !cached {
+		dbgPrintf("fuse: Getattr %s (%s)\n", nd.Name, nd.getPath())
 		dnode, err = dav.Stat(nd.getPath())
 		if err == nil {
-			nd.LastStat = now
+			nd.lastStatNow()
 		}
+	} else {
+		dbgPrintf("fuse: Getattr %s (%s) (cached)\n", nd.Name, nd.getPath())
 	}
-	dbgPrintf("fuse: Getattr %s (%s) (cached)\n", nd.Name, nd.getPath())
+
 	if err == nil {
+
+		// Sanity check.
 		if nd.Name != "" && dnode.IsDir != nd.IsDir {
-			// XXX FIXME file changed to dir or vice versa ...
-			// mark whole node stale, refuse i/o operations
 			dbgPrintf("fuse: Getattr %s isdir %v != isdir %v\n", dnode.Name, dnode.IsDir, nd.IsDir)
-			nd.LastStat = time.Time{}
+			nd.lastStatInvalid()
 			err = fuse.Errno(syscall.ESTALE)
 		} else {
+			// All well, build fuse.Attr.
 			nd.Dnode = dnode
 			mode := os.FileMode(0644)
 			if dnode.IsDir {
@@ -255,15 +260,30 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error) {
 	dbgPrintf("fuse: Lookup %s in %s\n", name, nd.Name)
 	nd.incIoRef()
-	path := joinPath(nd.getPath(), name)
-	dnode, err := dav.Stat(path)
+	var updateTime time.Time
+
+	// do we have a recent entry in the cache?
+	nd.Lock()
+	dnode, cached := nd.getCachedDnode(name)
+	if cached {
+		updateTime = nd.DirCacheTime
+	}
+	nd.Unlock()
+
+	// if not, call Stat()
+	if !cached {
+		path := joinPath(nd.getPath(), name)
+		dnode, err = dav.Stat(path)
+		updateTime = time.Now()
+	}
+
 	if err == nil {
-		dbgPrintf("fuse: Lookup %s ok add %s\n", path, dnode.Name)
+		dbgPrintf("fuse: Lookup ok add %s\n", name)
 		node := nd.addNode(dnode)
-		node.LastStat = time.Now()
+		nd.lastStatAt(updateTime)
 		rn = node
 	} else {
-		dbgPrintf("fuse: Lookup %s failed: %s\n", path, err)
+		dbgPrintf("fuse: Lookup %d failed: %s\n", name, err)
 	}
 	nd.decIoRef()
 	return
@@ -272,7 +292,13 @@ func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error)
 func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 	nd.incIoRef()
 	path := nd.getPath()
-	dirs, err := dav.Readdir(path, false)
+	dbgPrintf("fuse: ReadDirAll %s\n", nd.Name)
+	dirs, err := dav.Readdir(path, true)
+	if err == nil {
+		nd.Lock()
+		nd.addCachedDnodes(dirs)
+		nd.Unlock()
+	}
 	nd.decIoRef()
 	if err != nil {
 		return
@@ -299,7 +325,7 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
 	excl  := flagSet(req.Flags, fuse.OpenExclusive)
-	dbgPrintf("fuse: Create %s: trunc %v create %v read %v write %v excl %v\n", req.Name, trunc, read, write, excl)
+	dbgPrintf("fuse: Create %s: trunc %v read %v write %v excl %v\n", req.Name, trunc, read, write, excl)
 	path = joinPath(path, req.Name)
 	created := false
 	if trunc {
@@ -469,7 +495,7 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	if err == nil {
 		nf.Lock()
 		nf.Dnode = dnode
-		nf.LastStat = time.Now()
+		nf.lastStatNow()
 		if dnode.Size == nf.Size && dnode.Mtime == nf.Mtime {
 			resp.Flags = fuse.OpenKeepCache
 		}

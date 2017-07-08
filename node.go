@@ -18,6 +18,8 @@ type Node struct {
 	Dnode
 	Atime		time.Time
 	LastStat	time.Time
+	DirCache	map[string]Dnode
+	DirCacheTime	time.Time
 	Inode		uint64
 	RefCount	[2]int
 	Deleted		bool
