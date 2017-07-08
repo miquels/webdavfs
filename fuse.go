@@ -329,9 +329,14 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	path = joinPath(path, req.Name)
 	created := false
 	if trunc {
-		created, err = dav.Put(path, []byte{}, true)
+		// A simple put with no body creates and truncates the
+		// file if it's not there.
+		created, err = dav.Put(path, []byte{}, true, excl)
 	} else {
-		created, err = dav.PutRange(path, []byte{}, 0, true)
+		// A Put-Range at offset 0 with an empty body
+		// creates the file if not present, but doesn't
+		// truncate it.
+		created, err = dav.PutRange(path, []byte{}, 0, true, excl)
 	}
 	if err == nil && excl && !created {
 		err = fuse.EEXIST
@@ -365,11 +370,11 @@ func (nd *Node) ftruncate(ctx context.Context, size uint64) (err error) {
 	nd.Unlock()
 	if size == 0 {
 		if nd.Size > 0 {
-			_, err = dav.Put(path, []byte{}, false)
+			_, err = dav.Put(path, []byte{}, false, false)
 		}
-	} else if size >= nd.Size {
-		_, err = dav.PutRange(path, []byte{}, 0, false)
-	} else {
+	} else if size > nd.Size {
+		_, err = dav.PutRange(path, []byte{0}, int64(size - 1), false, false)
+	} else if size != nd.Size {
 		err = fuse.ERANGE
 	}
 	nd.Lock()
@@ -468,10 +473,14 @@ func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wr
 		err = fuse.Errno(syscall.ESTALE)
 		return
 	}
+	if len(req.Data) == 0 {
+		resp.Size = 0
+		return
+	}
 	nf.incIoRef()
 	path := nf.getPath()
 	dbgPrintf("fuse: Write: %s (node @ %p)\n", path, nf)
-	_, err = dav.PutRange(path, req.Data, req.Offset, false)
+	_, err = dav.PutRange(path, req.Data, req.Offset, false, false)
 	if err == nil {
 		resp.Size = len(req.Data)
 		sz := uint64(req.Offset) + uint64(len(req.Data))
@@ -516,7 +525,7 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	// This is actually not called, truncating is
 	// done by calling Setattr with 0 size.
 	if trunc {
-		_, err = dav.Put(path, []byte{}, false)
+		_, err = dav.Put(path, []byte{}, false, false)
 		if err == nil {
 			nf.Size = 0
 		}

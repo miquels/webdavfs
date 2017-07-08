@@ -556,22 +556,26 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 }
 
 // https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
-func (d *DavClient) apachePutRange(path string, data []byte, offset int64, overwrite bool) (created bool, err error) {
+func (d *DavClient) apachePutRange(path string, data []byte, offset int64, create bool, excl bool) (created bool, err error) {
 	// dbgPrintf("webdav: apachePutRange %d %d @ %s\n", offset, len(data), path)
 	req, err := d.buildRequest("PUT", path, data)
 
 	end := offset + int64(len(data)) - 1
-	if end < 0 {
-		end = 0
+	if end < offset {
+		end = offset
 	}
-	if !overwrite {
+	if create {
+		if excl {
+			req.Header.Set("If-None-Match", "*")
+		}
+	} else {
 		req.Header.Set("If-Match", "*")
 	}
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", offset, end))
-	// dbgPrintf("webdav: apachePutRange: req.header %+v\n", req.Header)
+	dbgPrintf("webdav: apachePutRange: req.header %+v\n", req.Header)
 
 	resp, err := d.do(req)
-	// dbgPrintf("webdav: apachePutRange: reply %s %+v\n", resp.Status, resp.Header)
+	dbgPrintf("webdav: apachePutRange: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
@@ -581,16 +585,20 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64, overw
 }
 
 // http://sabre.io/dav/http-patch/
-func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, overwrite bool) (created bool, err error) {
+func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, create bool, excl bool) (created bool, err error) {
 	// dbgPrintf("webdav: sabrePutRange: %d %d @ %s\n", offset, len(data), path)
 
 	req, err := d.buildRequest("PATCH", path, data)
 
 	end := offset + int64(len(data)) - 1
-	if end < 0 {
-		end = 0
+	if end < offset {
+		end = offset
 	}
-	if !overwrite {
+	if create {
+		if excl {
+			req.Header.Set("If-None-Match", "*")
+		}
+	} else {
 		req.Header.Set("If-Match", "*")
 	}
 	req.Header.Set("Content-Type", "application/x-sabredav-partialupdate")
@@ -606,12 +614,12 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, overwr
 	return
 }
 
-func (d *DavClient) PutRange(path string, data []byte, offset int64, overwrite bool) (created bool, err error) {
+func (d *DavClient) PutRange(path string, data []byte, offset int64, create bool, excl bool) (created bool, err error) {
 	if d.IsSabre {
-		return d.sabrePutRange(path, data, offset, overwrite)
+		return d.sabrePutRange(path, data, offset, create, excl)
 	}
 	if d.IsApache {
-		return d.apachePutRange(path, data, offset, overwrite)
+		return d.apachePutRange(path, data, offset, create, excl)
 	}
 	err = davToErrno(&DavError{
 		Message: "405 Method Not Allowed",
@@ -620,10 +628,14 @@ func (d *DavClient) PutRange(path string, data []byte, offset int64, overwrite b
 	return
 }
 
-func (d *DavClient) Put(path string, data []byte, overwrite bool) (created bool, err error) {
+func (d *DavClient) Put(path string, data []byte, create bool, excl bool) (created bool, err error) {
 	// dbgPrintf("webdav: Put: %d @ %s\n", len(data), path)
 	req, err := d.buildRequest("PUT", path, data)
-	if !overwrite {
+	if create {
+		if excl {
+			req.Header.Set("If-None-Match", "*")
+		}
+	} else {
 		req.Header.Set("If-Match", "*")
 	}
 	resp, err := d.do(req)
