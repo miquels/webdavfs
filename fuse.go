@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	statCacheTime  = 1 * time.Second
 	attrValidTime  = 1 * time.Minute
 	entryValidTime = 1 * time.Minute
 )
@@ -118,16 +119,28 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 
 	dbgPrintf("fuse: Rename %s -> %s\n", oldPath, newPath)
 
-	// Stat and if found, move
-	nd.Unlock()
-	dnode, err := dav.Stat(oldPath)
+	isDir := false
+	node := nd.getNode(req.OldName)
+	if node == nil {
+		// don't have the source node cached- need to
+		// find out if it's a dir or not, so stat.
+		nd.Unlock()
+		var dnode Dnode
+		dnode, err = dav.Stat(oldPath)
+		isDir = dnode.IsDir
+	} else {
+		isDir = node.IsDir
+		nd.Unlock()
+	}
+
 	if err == nil {
-		if dnode.IsDir {
+		if isDir {
 			oldPath += "/"
 			newPath += "/"
 		}
 		err = dav.Move(oldPath, newPath)
 	}
+
 	nd.Lock()
 	if err == nil {
 		nd.moveNode(destNode, req.OldName, req.NewName)
@@ -183,7 +196,7 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 	return
 }
 
-// XXX consider doing nothing if called within 1 second of Lookup().
+// XXX consider doing nothing if called within 1 second of Lookup(), Open(), Create()
 func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 	if nd.Deleted {
 		err = fuse.Errno(syscall.ESTALE)
@@ -191,12 +204,21 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 	}
 	nd.incIoRef()
 	dbgPrintf("fuse: Getattr %s (%s)\n", nd.Name, nd.getPath())
-	dnode, err := dav.Stat(nd.getPath())
+	dnode := nd.Dnode
+	now := time.Now()
+	if nd.LastStat.Add(statCacheTime).Before(now) {
+		dnode, err = dav.Stat(nd.getPath())
+		if err == nil {
+			nd.LastStat = now
+		}
+	}
+	dbgPrintf("fuse: Getattr %s (%s) (cached)\n", nd.Name, nd.getPath())
 	if err == nil {
 		if nd.Name != "" && dnode.IsDir != nd.IsDir {
 			// XXX FIXME file changed to dir or vice versa ...
 			// mark whole node stale, refuse i/o operations
 			dbgPrintf("fuse: Getattr %s isdir %v != isdir %v\n", dnode.Name, dnode.IsDir, nd.IsDir)
+			nd.LastStat = time.Time{}
 			err = fuse.Errno(syscall.ESTALE)
 		} else {
 			nd.Dnode = dnode
@@ -237,7 +259,9 @@ func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error)
 	dnode, err := dav.Stat(path)
 	if err == nil {
 		dbgPrintf("fuse: Lookup %s ok add %s\n", path, dnode.Name)
-		rn = nd.addNode(dnode)
+		node := nd.addNode(dnode)
+		node.LastStat = time.Now()
+		rn = node
 	} else {
 		dbgPrintf("fuse: Lookup %s failed: %s\n", path, err)
 	}
@@ -272,17 +296,16 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	path := nd.getPath()
 	nd.Unlock()
 	trunc := flagSet(req.Flags, fuse.OpenTruncate)
-	creat := flagSet(req.Flags, fuse.OpenCreate)
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
 	excl  := flagSet(req.Flags, fuse.OpenExclusive)
-	dbgPrintf("fuse: Create %s: trunc %v create %v read %v write %v excl %v\n", req.Name, trunc, creat, read, write, excl)
+	dbgPrintf("fuse: Create %s: trunc %v create %v read %v write %v excl %v\n", req.Name, trunc, read, write, excl)
 	path = joinPath(path, req.Name)
 	created := false
 	if trunc {
-		created, err = dav.Put(path, []byte{})
+		created, err = dav.Put(path, []byte{}, true)
 	} else {
-		created, err = dav.PutRange(path, []byte{}, 0)
+		created, err = dav.PutRange(path, []byte{}, 0, true)
 	}
 	if err == nil && excl && !created {
 		err = fuse.EEXIST
@@ -311,18 +334,24 @@ func (nd *Node) Forget() {
 }
 
 func (nd *Node) ftruncate(ctx context.Context, size uint64) (err error) {
-	nd.incIoRef()
+	nd.incMetaRefThenLock()
 	path := nd.getPath()
+	nd.Unlock()
 	if size == 0 {
 		if nd.Size > 0 {
-			_, err = dav.Put(path, []byte{})
+			_, err = dav.Put(path, []byte{}, false)
 		}
 	} else if size >= nd.Size {
-		_, err = dav.PutRange(path, []byte{}, int64(size))
+		_, err = dav.PutRange(path, []byte{}, 0, false)
 	} else {
 		err = fuse.ERANGE
 	}
-	nd.decIoRef()
+	nd.Lock()
+	if err == nil {
+		nd.Size= size
+	}
+	nd.decMetaRef()
+	nd.Unlock()
 	return
 }
 
@@ -344,9 +373,6 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		if err != nil {
 			return
 		}
-		nd.Lock()
-		nd.Size = req.Size
-		nd.Unlock()
 	}
 
 	nd.Lock()
@@ -409,7 +435,7 @@ func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wr
 	nf.incIoRef()
 	path := nf.getPath()
 	dbgPrintf("fuse: Write: %s (node @ %p)\n", path, nf)
-	_, err = dav.PutRange(path, req.Data, req.Offset)
+	_, err = dav.PutRange(path, req.Data, req.Offset, false)
 	if err == nil {
 		resp.Size = len(req.Data)
 		sz := uint64(req.Offset) + uint64(len(req.Data))
@@ -431,28 +457,30 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	}
 	// truncate if we need to.
 	trunc := flagSet(req.Flags, fuse.OpenTruncate)
-	creat := flagSet(req.Flags, fuse.OpenCreate)
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
-	dbgPrintf("fuse: Open %s: trunc %v create %v read %v write %v\n", nf.Name, trunc, creat, read, write)
+	dbgPrintf("fuse: Open %s: trunc %v read %v write %v\n", nf.Name, trunc, read, write)
 
 	nf.incIoRef()
 	path := nf.getPath()
 
 	// See if cache is still valid.
-	// XXX Update cache if we can.
 	dnode, err := dav.Stat(path)
 	if err == nil {
+		nf.Lock()
+		nf.Dnode = dnode
+		nf.LastStat = time.Now()
 		if dnode.Size == nf.Size && dnode.Mtime == nf.Mtime {
 			resp.Flags = fuse.OpenKeepCache
 		}
+		nf.Unlock()
 	}
 	err = nil
 
 	// This is actually not called, truncating is
 	// done by calling Setattr with 0 size.
 	if trunc {
-		_, err = dav.Put(path, []byte{})
+		_, err = dav.Put(path, []byte{}, false)
 		if err == nil {
 			nf.Size = 0
 		}
