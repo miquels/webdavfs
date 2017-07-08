@@ -443,12 +443,22 @@ func (nf *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Read
 		return
 	}
 	nf.incIoRef()
+	defer nf.decIoRef()
+	nf.Lock()
+	toRead := int64(nf.Size) - req.Offset
+	nf.Unlock()
+	if toRead <= 0 {
+		resp.Data = []byte{}
+		return
+	}
+	if toRead > int64(req.Size) {
+		toRead = int64(req.Size)
+	}
 	path := nf.getPath()
-	data, err := dav.GetRange(path, req.Offset, req.Size)
+	data, err := dav.GetRange(path, req.Offset, int(toRead))
 	if err == nil {
 		resp.Data = data
 	}
-	nf.decIoRef()
 	return
 }
 
