@@ -34,13 +34,18 @@ func copyIO(wg *sync.WaitGroup, from *os.File, to *os.File) {
 	}
 }
 
-func relaySignals(pid int) {
+func relaySignals(wg *sync.WaitGroup, pid int, quit chan bool) {
+	defer wg.Done()
 	c := make(chan os.Signal, 8)
 	signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	for {
-		s := <-c
-		s2 := s.(syscall.Signal)
-		syscall.Kill(pid, s2)
+		select {
+		case s := <-c:
+			s2 := s.(syscall.Signal)
+			syscall.Kill(pid, s2)
+		case <-quit:
+			return
+		}
 	}
 }
 
@@ -79,13 +84,20 @@ func Daemonize() error {
 	wout.Close()
 	werr.Close()
 
-	// and copy io from daemon.
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go copyIO(&wg, rout, os.Stdout)
-	go copyIO(&wg, rerr, os.Stderr)
-	go relaySignals(proc.Pid)
-	wg.Wait()
+	// start goroutines to copy I/O and signals
+	var wg1 sync.WaitGroup
+	wg1.Add(2)
+	go copyIO(&wg1, rout, os.Stdout)
+	go copyIO(&wg1, rerr, os.Stderr)
+
+	var wg2 sync.WaitGroup
+	wg2.Add(1)
+	quit := make(chan bool)
+	go relaySignals(&wg2, proc.Pid, quit)
+
+	wg1.Wait()
+	quit <- true
+	wg2.Wait()
 
 	/// get exit status (if any)
 	status := 0
