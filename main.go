@@ -13,6 +13,7 @@ import (
 )
 
 type Opts struct {
+	Debug		bool
 	Fake		bool
 	NoMtab		bool
 	Sloppy		bool
@@ -77,8 +78,17 @@ func rebuildOptions(url, path string) {
 	os.Args = args
 }
 
+func parseUInt32(s string, opt string) uint32 {
+	n, err := strconv.ParseUint(s , 10, 32)
+	if err != nil {
+		fatal(opt + " option: " + err.Error())
+	}
+	return uint32(n)
+}
+
 func main() {
 
+	getopt.Flag(&opts.Debug, 'd', "enable debugging")
 	getopt.Flag(&opts.NoMtab, 'n', "do not uodate /etc/mtab (obsolete)")
 	getopt.Flag(&opts.Sloppy, 's', "ignore unknown mount options")
 	getopt.Flag(&opts.Fake, 'f', "do everything but the actual mount")
@@ -137,22 +147,24 @@ func main() {
 		config.Gid = uint32(os.Getgid())
 	}
 
+	maxconns := 8
+	maxidleconns := 8
+	if opts.StrOption["maxconns"] != "" {
+		maxconns = int(parseUInt32(opts.StrOption["maxconns"], "maxconns"))
+	}
+	if opts.StrOption["maxidleconns"] != "" {
+		maxidleconns = int(parseUInt32(opts.StrOption["maxidleconns"], "maxidleconns"))
+	}
+
 	if opts.StrOption["uid"] != "" {
-		uid, err := strconv.ParseUint(opts.StrOption["uid"] , 10, 32)
-		if err != nil {
-			fatal("uid option: " + err.Error())
-		}
-		config.Uid = uint32(uid)
+		uid := parseUInt32(opts.StrOption["uid"], "uid")
 		if os.Getuid() != 0 && os.Getuid() != int(uid) {
 			fatal("uid option: permission denied")
 		}
+		config.Uid = uid
 	}
 	if opts.StrOption["gid"] != "" {
-		gid, err := strconv.ParseUint(opts.StrOption["gid"] , 10, 32)
-		if err != nil {
-			fatal("gid option: " + err.Error())
-		}
-		config.Gid = uint32(gid)
+		gid := parseUInt32(opts.StrOption["gid"], "gid")
 		if os.Getuid() != 0 {
 			ok := false
 			if os.Getgid() == int(gid) {
@@ -170,6 +182,7 @@ func main() {
 				fatal("gid option: permission denied")
 			}
 		}
+		config.Gid = gid
 	}
 
 	if opts.StrOption["mode"] != "" {
@@ -212,6 +225,8 @@ func main() {
 
 	dav := &DavClient{
 		Url: url,
+		MaxConns: maxconns,
+		MaxIdleConns: maxidleconns,
 		Username: username,
 		Password: password,
 	}

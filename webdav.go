@@ -16,6 +16,9 @@ import (
 	"bazil.org/fuse"
 )
 
+type davEmpty struct {}
+type davSem chan davEmpty
+
 type DavClient struct {
 	Url		string
 	Username	string
@@ -24,8 +27,11 @@ type DavClient struct {
 	DavSupport	map[string]bool
 	IsSabre		bool
 	IsApache	bool
+	MaxConns	int
+	MaxIdleConns	int
 	base		string
 	cc		*http.Client
+	davSem		davSem
 }
 
 type DavError struct {
@@ -198,12 +204,38 @@ func getHeader(h http.Header, key string) string {
 	return strings.Join(h[key], ",")
 }
 
+func drainBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	b := make([]byte, 256)
+	var err error
+	for err != io.EOF {
+		_, err = resp.Body.Read(b)
+	}
+	resp.Body.Close()
+	resp.Body = nil
+}
+
 func (d *DavError) Errno() fuse.Errno {
 	return fuse.Errno(d.Errnum)
 }
 
 func (d *DavError) Error() string {
 	return d.Message
+}
+
+func (d *DavClient) semAcquire() {
+	if d.MaxConns > 0 {
+		d.davSem <- davEmpty{}
+	}
+}
+
+func (d *DavClient) semRelease() {
+	if d.MaxConns > 0 {
+		<-d.davSem
+	}
+	return
 }
 
 func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (req *http.Request, err error) {
@@ -270,9 +302,12 @@ func (d *DavClient) Mount() (err error) {
 		}
 		d.base = u.Path
 
+		if d.MaxConns > 0 {
+			d.davSem = make(davSem, d.MaxConns)
+		}
 		// Override some values from DefaultTransport.
 		tr := *(http.DefaultTransport.(*http.Transport))
-		tr.MaxIdleConnsPerHost = 4
+		tr.MaxIdleConnsPerHost = d.MaxIdleConns
 		tr.DisableCompression = true
 
 		d.cc = &http.Client{
@@ -289,10 +324,10 @@ func (d *DavClient) Mount() (err error) {
 	}
 	req.Header.Set("Accept", "*/*")
 	resp, err := d.do(req)
+	defer drainBody(resp)
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
 	if !statusIsValid(resp) {
 		err = errors.New(resp.Status)
 		return
@@ -323,6 +358,9 @@ func (d *DavClient) Mount() (err error) {
 }
 
 func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Props, err error) {
+
+	d.semAcquire()
+	defer d.semRelease()
 
 	a := append([]string{}, `<?xml version="1.0" encoding="utf-8" ?><D:propfind xmlns:D='DAV:'>`)
 	if len(props) == 0 {
@@ -490,6 +528,9 @@ func (d *DavClient) Get(path string) (data []byte, err error) {
 }
 
 func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte, err error) {
+	d.semAcquire()
+	defer d.semRelease()
+
 	dbgPrintf("webdav: GetRange %s %d %d\n", path, offset, length)
 	req, err := d.buildRequest("GET", path)
 	if err != nil {
@@ -506,6 +547,8 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 		dbgPrintf("webdav: GetRange: READ ERROR %s\n", err)
 		return
 	}
+	defer resp.Body.Close()
+
 	// dbgPrintf("webdav: GetRange: resp header: %+v\n", resp.Header)
 	if !statusIsValid(resp) {
 		err = errors.New(resp.Status)
@@ -520,7 +563,6 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 		return
 	}
 	// dbgPrintf("webdav: GetRange: resp header: %+v\n", resp.Header)
-	defer resp.Body.Close()
 	data, err = ioutil.ReadAll(resp.Body)
 	// dbgPrintf("webdav: GetRange: READ OK %d bytes\n", len(data))
 	if len(data) > length {
@@ -530,34 +572,43 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 }
 
 func (d *DavClient) Mkcol(path string) (err error) {
+	d.semAcquire()
+	defer d.semRelease()
+
 	req, err := d.buildRequest("MKCOL", path)
 	if err != nil {
 		return
 	}
 	resp, err := d.do(req)
+	defer drainBody(resp)
 	// dbgPrintf("webdav: Mkcol: reply %+v\n", resp.Header)
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
 	return
 }
 
 func (d *DavClient) Delete(path string) (err error) {
+	d.semAcquire()
+	defer d.semRelease()
+
 	req, err := d.buildRequest("DELETE", path)
 	if err != nil {
 		return
 	}
 	resp, err := d.do(req)
+	defer drainBody(resp)
 	// dbgPrintf("webdav: Delete reply %+v\n", resp.Header)
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
 	return
 }
 
 func (d *DavClient) Move(oldPath, newPath string) (err error) {
+	d.semAcquire()
+	defer d.semRelease()
+
 	dbgPrintf("webdav: Move: %s -> %s\n", oldPath, newPath)
 	req, err := d.buildRequest("MOVE", oldPath)
 	if err != nil {
@@ -570,11 +621,18 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 	}
 	req.Header.Set("Destination", joinPath(d.Url, newPath))
 	resp, err := d.do(req)
+	defer drainBody(resp)
 	dbgPrintf("webdav: Move: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	if resp.StatusCode == 207 {
+		// multipart response means there were errors.
+		err = davToErrno(&DavError{
+			Message: "500 unexpected error during MOVE",
+			Code: 500,
+		})
+	}
 	return
 }
 
@@ -598,12 +656,12 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64, creat
 	dbgPrintf("webdav: apachePutRange: req.header %+v\n", req.Header)
 
 	resp, err := d.do(req)
+	defer drainBody(resp)
 	dbgPrintf("webdav: apachePutRange: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
 	created = resp.StatusCode == 201
-	defer resp.Body.Close()
 	return
 }
 
@@ -628,16 +686,17 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, create
 	req.Header.Set("X-Update-Range", fmt.Sprintf("bytes=%d-%d", offset, end))
 
 	resp, err := d.do(req)
+	defer drainBody(resp)
 	// dbgPrintf("webdav: sabrePutRange: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
-	created = resp.StatusCode == 201
-	defer resp.Body.Close()
 	return
 }
 
 func (d *DavClient) PutRange(path string, data []byte, offset int64, create bool, excl bool) (created bool, err error) {
+	d.semAcquire()
+	defer d.semRelease()
 	if d.IsSabre {
 		return d.sabrePutRange(path, data, offset, create, excl)
 	}
@@ -656,6 +715,8 @@ func (d *DavClient) CanPutRange() bool {
 }
 
 func (d *DavClient) Put(path string, data []byte, create bool, excl bool) (created bool, err error) {
+	d.semAcquire()
+	defer d.semRelease()
 	// dbgPrintf("webdav: Put: %d @ %s\n", len(data), path)
 
 	if !d.CanPutRange() {
