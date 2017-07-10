@@ -44,14 +44,16 @@ from webdav.
 
 ## How to install and use.
 
-First you need to install golang, git, and set up your environment:
+First you need to install golang, git, fuse, and set up your environment:
 
 ```
 $ su -m
 Password:
 # apt-get install golang
 # apt-get install git
+# apt-get install fuse
 # exit
+$ cd
 $ mkdir pkg bin src
 $ export GOPATH=$HOME
 ```
@@ -75,10 +77,9 @@ $ go build
 
 And install it:
 
-````
+```
 $ su -m
 Password:
-# apt-get install fuse
 # cp webdavfs /sbin/mount.webdavfs
 ```
 
