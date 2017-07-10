@@ -3,22 +3,23 @@
 ## A FUSE filesystem for WEBDAV shares.
 
 Most filesystem drivers for Webdav shares act somewhat like a mirror;
-if a file is read then it's cached in its entirety on a local
-drive, then read from there. Writing files is similar; if it's
-just an update, the whole file is first written then sent back
-to the webdav server. In many cases that is not optimal.
+if a file is read it's first downloaded then cached in its entirety
+on a local drive, then read from there. Writing files is similar or
+even worse- a partial update to a file might involve downloading it first,
+modifying it, then uploading it again. In many cases that is not optimal.
 
 This filesystem driver behaves like a network filesystem. It doesn't
-cache anything locally, it just sends out reads/writes over the
+cache anything locally, it just sends out partial reads/writes over the
 network.
 
 For that to work, you need partial write support- and unfortunately,
 there is no standard for that. See
 https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
 
-There is support in Apache and SabreDav for partial writes, so we
-detect if it's Apache or SabreDav we're talking to and then use
-their specific way to partially update files.
+However, there is support in Apache (the webserver, using mod_dav) and
+SabreDav (a php webserver server library, used by e.g. NextCloud)
+for partial writes. So we detect if it's Apache or SabreDav we're talking
+to and then use their specific methods to partially update files.
 
 ## What is working
 
