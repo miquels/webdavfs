@@ -72,7 +72,7 @@ func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node,
 	nd.incMetaRefThenLock()
 	path := joinPath(nd.getPath(), req.Name)
 	nd.Unlock()
-	err = dav.Mkcol(path + "/")
+	err = dav.Mkcol(addSlash(path))
 	nd.Lock()
 	if err == nil {
 		now := time.Now()
@@ -156,8 +156,8 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 
 	if err == nil {
 		if isDir {
-			oldPath += "/"
-			newPath += "/"
+			oldPath = addSlash(oldPath)
+			newPath = addSlash(newPath)
 		}
 		err = dav.Move(oldPath, newPath)
 	}
@@ -189,10 +189,8 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 		}
 		if err == nil {
 			isDir := false
-			for _, p := range props {
-				if p.ResourceType == "collection" {
-					isDir = true
-				}
+			if props[0].ResourceType == "collection" {
+				isDir = true
 			}
 			if req.Dir && !isDir {
 				err = fuse.Errno(syscall.ENOTDIR)
@@ -204,7 +202,7 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 	}
 	if err == nil {
 		if req.Dir {
-			path += "/"
+			path = addSlash(path)
 		}
 		err = dav.Delete(path)
 	}
@@ -227,20 +225,24 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 	dnode := nd.Dnode
 	if !nd.statInfoFresh() {
-		dbgPrintf("fuse: Getattr %s (%s)\n", nd.Name, nd.getPath())
-		dnode, err = dav.Stat(nd.getPath())
+		dbgPrintf("fuse: Getattr \"%s\" (%s)\n", nd.Name, nd.getPath())
+		path := nd.getPath()
+		if nd.IsDir {
+			path = addSlash(path)
+		}
+		dnode, err = dav.Stat(path)
 		if err == nil {
 			nd.statInfoTouch()
 		}
 	} else {
-		dbgPrintf("fuse: Getattr %s (%s) (cached)\n", nd.Name, nd.getPath())
+		dbgPrintf("fuse: Getattr \"%s\" (%s) (cached)\n", nd.Name, nd.getPath())
 	}
 
 	if err == nil {
 
 		// Sanity check.
 		if nd.Name != "" && dnode.IsDir != nd.IsDir {
-			dbgPrintf("fuse: Getattr %s isdir %v != isdir %v\n", dnode.Name, dnode.IsDir, nd.IsDir)
+			dbgPrintf("fuse: Getattr \"%s\" isdir %v != isdir %v\n", dnode.Name, dnode.IsDir, nd.IsDir)
 			nd.invalidateThisNode()
 			err = fuse.Errno(syscall.ESTALE)
 		} else {
@@ -277,7 +279,7 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 }
 
 func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error) {
-	dbgPrintf("fuse: Lookup %s in %s\n", name, nd.Name)
+	dbgPrintf("fuse: Lookup \"%s in \"%s\"\n", name, nd.Name)
 	nd.incIoRef()
 	defer nd.decIoRef()
 
@@ -309,7 +311,7 @@ func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error)
 func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 	nd.incIoRef()
 	path := nd.getPath()
-	dbgPrintf("fuse: ReadDirAll %s\n", nd.Name)
+	dbgPrintf("fuse: ReadDirAll \"%s\" (%s)\n", nd.Name, path)
 	dirs, err := dav.Readdir(path, true)
 	if err == nil {
 		nd.Lock()

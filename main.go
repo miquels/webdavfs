@@ -219,7 +219,9 @@ func main() {
 	if err != nil {
 		fatal(err.Error())
 	}
-
+	if !dav.CanPutRange() && !opts.BoolOption["ro"] {
+		fmt.Fprintf(os.Stderr, "%s: no PUT Range support, writing disabled\n", url)
+	}
 	if opts.Fake {
 		return
 	}

@@ -75,8 +75,9 @@ var mostProps = "<D:prop><D:resourcetype/><D:creationdate/><D:getlastmodified/><
 var davTimeFormat = "2006-01-02T15:04:05Z"
 
 var davToErrnoMap = map[int]syscall.Errno{
+	403:	syscall.EACCES,
 	404:	syscall.ENOENT,
-	405:	syscall.EPERM,
+	405:	syscall.EACCES,
 	408:	syscall.ETIMEDOUT,
 	409:	syscall.ENOENT,
 	416:	syscall.ERANGE,
@@ -144,7 +145,7 @@ func dirName(s string) string {
 	if i > 0 {
 		return s[:i]
 	}
-	return s
+	return "/"
 }
 
 func parseTime (s string) (t time.Time) {
@@ -164,10 +165,10 @@ func joinPath(s1, s2 string) string {
 	return s1 + "/" + s2
 }
 
-func stripHrefPrefix(href string, prefix string) string {
+func stripHrefPrefix(href string, prefix string) (string, bool) {
 	u, _ := url.ParseRequestURI(href)
 	if u == nil {
-		return ""
+		return "", false
 	}
 	name := u.Path
 	if strings.HasPrefix(name, prefix) {
@@ -175,12 +176,9 @@ func stripHrefPrefix(href string, prefix string) string {
 	}
 	i := strings.Index(name, "/")
 	if i >= 0 && i < len(name) - 1 {
-		return ""
+		return "", false
 	}
-	if name == "" {
-		name = "./"
-	}
-	return name
+	return name, true
 }
 
 func mapLine(s string) (m map[string]bool) {
@@ -281,7 +279,7 @@ func (d *DavClient) Mount() (err error) {
 			Timeout: 60 * time.Second,
 			Transport: &tr,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
+				return errors.New("400 Will not follow redirect")
 			},
 		}
 	}
@@ -312,10 +310,19 @@ func (d *DavClient) Mount() (err error) {
 		err = errors.New("not a webdav server")
 	}
 
+	// check if it exists and is a directory.
+	if err == nil {
+		var dnode Dnode
+		dnode, err = d.Stat("/")
+		if err == nil && !dnode.IsDir {
+			err = errors.New(d.Url + " is not a directory")
+		}
+	}
+
 	return
 }
 
-func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[string]*Props, err error) {
+func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Props, err error) {
 
 	a := append([]string{}, `<?xml version="1.0" encoding="utf-8" ?><D:propfind xmlns:D='DAV:'>`)
 	if len(props) == 0 {
@@ -356,7 +363,7 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 		return
 	}
 
-	// dbgPrintf("PROPFIND: %+v\n", string(contents))
+	// dbgPrintf("PROPFIND: %s\n%+v\n", resp.Status, string(contents))
 
 	obj := MultiStatus{}
 	err = xml.Unmarshal(contents, &obj)
@@ -376,7 +383,6 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 		}
 	}
 
-	ret = make(map[string]*Props)
 	for _, respTag := range obj.Responses {
 		if respTag.Propstat == nil || respTag.Propstat.Props == nil {
 			err = errors.New("XML decode error")
@@ -384,20 +390,23 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret map[st
 		}
 		props := respTag.Propstat.Props
 		props.Etag = stripQuotes(props.Etag)
-		name := stripHrefPrefix(respTag.Href, prefix)
-		if name == "" {
+
+		// make sure collection hrefs end in '/'
+		if props.ResourceType_.Collection != nil {
+			props.ResourceType = "collection"
+			respTag.Href = addSlash(respTag.Href)
+		}
+		name, ok := stripHrefPrefix(respTag.Href, prefix)
+		if !ok {
 			continue
 		}
 		props.Name = name
-		if props.ResourceType_.Collection != nil {
-			props.ResourceType = "collection"
-		}
-		ret[name] = props
+		ret = append(ret, props)
 	}
 	return
 }
 
-func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string) (ret map[string]*Props, err error) {
+func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string) (ret []*Props, err error) {
 	ret, err = d.PropFind(path, depth, props)
 
 	// did we get a redirect?
@@ -428,8 +437,11 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 	if err != nil {
 		return
 	}
-	for name, p := range props {
-		name = stripLastSlash(name)
+	for _, p := range props {
+		name := stripLastSlash(p.Name)
+		if name == "" || name == "/" {
+			name = "."
+		}
 		if strings.Index(name, "/") >= 0 {
 			continue
 		}
@@ -461,17 +473,15 @@ func (d *DavClient) Stat(path string) (ret Dnode, err error) {
 		err = errors.New("500 PropFind error")
 		return
 	}
-	for _, p := range props {
-		size, _ := strconv.ParseUint(p.ContentLength, 10, 64)
-		ret = Dnode{
-			Name: stripLastSlash(p.Name),
-			IsDir: p.ResourceType == "collection",
-			Mtime: parseTime(p.LastModified),
-			Ctime: parseTime(p.CreationDate),
-			Size: size,
-		} 
-		return
-	}
+	p := props[0]
+	size, _ := strconv.ParseUint(p.ContentLength, 10, 64)
+	ret = Dnode{
+		Name: stripLastSlash(p.Name),
+		IsDir: p.ResourceType == "collection",
+		Mtime: parseTime(p.LastModified),
+		Ctime: parseTime(p.CreationDate),
+		Size: size,
+	} 
 	return
 }
 
@@ -641,8 +651,21 @@ func (d *DavClient) PutRange(path string, data []byte, offset int64, create bool
 	return
 }
 
+func (d *DavClient) CanPutRange() bool {
+	return d.IsSabre || d.IsApache
+}
+
 func (d *DavClient) Put(path string, data []byte, create bool, excl bool) (created bool, err error) {
 	// dbgPrintf("webdav: Put: %d @ %s\n", len(data), path)
+
+	if !d.CanPutRange() {
+		err = davToErrno(&DavError{
+			Message: "405 Method Not Allowed",
+			Code: 405,
+		})
+		return
+	}
+
 	req, err := d.buildRequest("PUT", path, data)
 	if create {
 		if excl {
