@@ -17,6 +17,7 @@ type Opts struct {
 	NoMtab		bool
 	Sloppy		bool
 	Verbose		bool
+	RawOptions	string
 	StrOption	map[string]string
 	BoolOption	map[string]bool
 }
@@ -41,20 +42,48 @@ func fatal(err string) {
 	os.Exit(1)
 }
 
-func main() {
-
-	if strings.HasPrefix(progname, "mount.") {
-		if !IsDaemon() {
-			Daemonize()
+// rebuild the os.Args array, string username/password.
+func rebuildOptions(url, path string) {
+	args := []string{ os.Args[0], url, path }
+	bools := ""
+	if opts.NoMtab {
+		bools += "n"
+	}
+	if opts.Sloppy {
+		bools += "s"
+	}
+	if opts.Fake {
+		bools += "f"
+	}
+	if opts.Verbose {
+		bools += "v"
+	}
+	if bools != "" {
+		args = append(args, "-" + bools)
+	}
+	stropts := []string{}
+	for _, o := range strings.Split(opts.RawOptions, ",") {
+		if strings.HasPrefix(o, "username=") {
+			os.Setenv("WEBDAV_USERNAME", o[9:])
+		} else if strings.HasPrefix(o, "password=") {
+			os.Setenv("WEBDAV_PASSWORD", o[9:])
+		} else {
+			stropts = append(stropts, o)
 		}
 	}
+	if len(stropts) > 0 {
+		args = append(args, "-o" + strings.Join(stropts, ","))
+	}
+	os.Args = args
+}
 
-	var mopts string
+func main() {
+
 	getopt.Flag(&opts.NoMtab, 'n', "do not uodate /etc/mtab (obsolete)")
 	getopt.Flag(&opts.Sloppy, 's', "ignore unknown mount options")
 	getopt.Flag(&opts.Fake, 'f', "do everything but the actual mount")
 	getopt.Flag(&opts.Verbose, 'v', "be verbose")
-	getopt.Flag(&mopts, 'o', "mount options")
+	getopt.Flag(&opts.RawOptions, 'o', "mount options")
 
 	// put non-option arguments last.
 	l := len(os.Args)
@@ -79,8 +108,12 @@ func main() {
 		usage(err)
 	}
 
+	// now the two non-options left are url and mountpoint.
+	url := getopt.Arg(0)
+	mountpoint := getopt.Arg(1)
+
 	// parse -o option1,option2,option3=foo ..
-	for _, o := range strings.Split(mopts, ",") {
+	for _, o := range strings.Split(opts.RawOptions, ",") {
 		kv := strings.SplitN(o, "=", 2)
 		if len(kv) > 1 {
 			opts.BoolOption[kv[0]] = true
@@ -88,6 +121,13 @@ func main() {
 		} else {
 			opts.StrOption[kv[0]] = "true"
 			opts.BoolOption[kv[0]] = true
+		}
+	}
+
+	if strings.HasPrefix(progname, "mount.") {
+		if !IsDaemon() {
+			rebuildOptions(url, mountpoint)
+			Daemonize()
 		}
 	}
 
@@ -154,10 +194,16 @@ func main() {
 		}
 	}
 
-	url := getopt.Arg(0)
-	mountpoint := getopt.Arg(1)
-	username := opts.StrOption["username"]
-	password := opts.StrOption["password"]
+	username := os.Getenv("WEBDAV_USERNAME")
+	password := os.Getenv("WEBDAV_PASSWORD")
+	if opts.StrOption["username"] != "" {
+		username = opts.StrOption["username"]
+	}
+	if opts.StrOption["password"] != "" {
+		password = opts.StrOption["password"]
+	}
+	os.Unsetenv("WEBDAV_USERNAME")
+	os.Unsetenv("WEBDAV_PASSWORD")
 
 	// for some reason we can end up without a $PATH ..
 	if os.Getenv("PATH") == "" {

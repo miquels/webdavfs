@@ -50,7 +50,6 @@ func NewFS(d *DavClient, config WebdavFS) *WebdavFS {
 	FS.fileMode = os.FileMode(FS.Mode &^ uint32(0111))
 
 	FS.dirMode = os.FileMode(FS.Mode)
-	dbgPrintf("1. mode %03o dirmode %03o filemode %03o\n", FS.Mode, FS.dirMode, FS.fileMode)
 	if FS.dirMode & 0007 > 0 {
 		FS.dirMode |= 0001
 	}
@@ -62,7 +61,6 @@ func NewFS(d *DavClient, config WebdavFS) *WebdavFS {
 	}
 	FS.dirMode |= os.ModeDir
 
-	dbgPrintf("2. mode %03o dirmode %03o filemode %03o\n", FS.Mode, FS.dirMode, FS.fileMode)
 	return FS
 }
 

@@ -49,6 +49,13 @@ func relaySignals(wg *sync.WaitGroup, pid int, quit chan bool) {
 	}
 }
 
+func isSetUidGid() bool {
+	if os.Getuid() == 0 {
+		return false
+	}
+	return os.Getuid() != os.Geteuid() || os.Getgid() != os.Getegid()
+}
+
 // Fork, then execute this binary again. This function will relay
 // I/O to stdout / stderr, and SIGHUP/INT/QUIT/TERM signals. When
 // the child calls Detach() we exit.
@@ -66,11 +73,19 @@ func Daemonize() error {
 		return err
 	}
 
-	// now re-exec ourselves.
-	binary, err := exec.LookPath(os.Args[0])
+	// find executable
+	var binary string
+	if !isSetUidGid() {
+		binary, err = exec.LookPath(os.Args[0])
+	} else {
+		binary = os.Args[0]
+		_, err = os.Stat(binary)
+	}
 	if err != nil {
 		return err
 	}
+
+	// now re-exec ourselves.
 	attrs := os.ProcAttr{
 		Files: []*os.File{ devnull, wout, werr },
 		Sys: &syscall.SysProcAttr{ Setsid: true },
