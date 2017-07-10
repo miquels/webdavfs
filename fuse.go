@@ -19,9 +19,15 @@ const (
 	entryValidTime = 1 * time.Minute
 )
 
-type FS struct {
-	root	*Node
+type WebdavFS struct {
+	Uid		uint32
+	Gid		uint32
+	Mode		uint32
+	dirMode		os.FileMode
+	fileMode	os.FileMode
+	root		*Node
 }
+var FS *WebdavFS
 var dav *DavClient
 
 func attrSet(v fuse.SetattrValid, f fuse.SetattrValid) bool {
@@ -32,12 +38,35 @@ func flagSet(v fuse.OpenFlags, f fuse.OpenFlags) bool {
 	return (v & f) > 0
 }
 
-func NewFS(d *DavClient) *FS {
+func NewFS(d *DavClient, config WebdavFS) *WebdavFS {
 	dav = d
-	return &FS{ root: rootNode }
+	FS = &config
+	FS.root = rootNode
+
+	if FS.Mode == 0 {
+		FS.Mode = 0700
+	}
+	FS.Mode = FS.Mode & 0777
+	FS.fileMode = os.FileMode(FS.Mode &^ uint32(0111))
+
+	FS.dirMode = os.FileMode(FS.Mode)
+	dbgPrintf("1. mode %03o dirmode %03o filemode %03o\n", FS.Mode, FS.dirMode, FS.fileMode)
+	if FS.dirMode & 0007 > 0 {
+		FS.dirMode |= 0001
+	}
+	if FS.dirMode & 0070 > 0 {
+		FS.dirMode |= 0010
+	}
+	if FS.dirMode & 0700 > 0 {
+		FS.dirMode |= 0100
+	}
+	FS.dirMode |= os.ModeDir
+
+	dbgPrintf("2. mode %03o dirmode %03o filemode %03o\n", FS.Mode, FS.dirMode, FS.fileMode)
+	return FS
 }
 
-func (fs *FS) Root() (fs.Node, error) {
+func (fs *WebdavFS) Root() (fs.Node, error) {
 	return fs.root, nil
 }
 
@@ -219,9 +248,9 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		} else {
 			// All well, build fuse.Attr.
 			nd.Dnode = dnode
-			mode := os.FileMode(0644)
-			if dnode.IsDir {
-				mode = os.FileMode(0755 | os.ModeDir)
+			mode := FS.fileMode
+			if nd.IsDir {
+				mode = FS.dirMode
 			}
 			if nd.Atime.Before(nd.Mtime) {
 				nd.Atime = nd.Mtime
@@ -234,10 +263,10 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 				Mtime: nd.Mtime,
 				Ctime: nd.Ctime,
 				Crtime: nd.Ctime,
-				Mode: os.FileMode(mode),
+				Mode: mode,
 				Nlink: 1,
-				Uid: 0,
-				Gid: 0,
+				Uid: FS.Uid,
+				Gid: FS.Gid,
 				BlockSize: 4096,
 			}
 			// dbgPrintf("fuse: Getattr: return stat: %+v\n", attr)
@@ -416,6 +445,10 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	if attrSet(v, fuse.SetattrAtimeNow) {
 		nd.Atime = time.Now()
 	}
+	mode := FS.fileMode
+	if nd.IsDir {
+		mode = FS.dirMode
+	}
 	attr := fuse.Attr{
 		Valid: attrValidTime,
 		Size:	nd.Size,
@@ -424,10 +457,10 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		Mtime: nd.Mtime,
 		Ctime: nd.Ctime,
 		Crtime: nd.Ctime,
-		Mode: 0644,
+		Mode: mode,
 		Nlink: 1,
-		Uid: 0,
-		Gid: 0,
+		Uid: FS.Uid,
+		Gid: FS.Gid,
 		BlockSize: 4096,
 	}
 	resp.Attr = attr

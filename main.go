@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -12,13 +13,17 @@ import (
 )
 
 type Opts struct {
-	Fake	bool
-	NoMtab	bool
-	Sloppy	bool
-	Verbose	bool
-	Option	map[string]string
+	Fake		bool
+	NoMtab		bool
+	Sloppy		bool
+	Verbose		bool
+	StrOption	map[string]string
+	BoolOption	map[string]bool
 }
-var opts = Opts{ Option: map[string]string{} }
+var opts = Opts{
+	StrOption:	map[string]string{},
+	BoolOption:	map[string]bool{},
+}
 var progname = path.Base(os.Args[0])
 
 var DefaultPath = "/usr/local/bin:/usr/local/sbin:/bin:/sbin:/usr/bin:/usr/sbin"
@@ -31,8 +36,8 @@ func usage(err error) {
 	os.Exit(1)
 }
 
-func fatal(err error) {
-	fmt.Fprintf(os.Stderr, "%s: %v\n", progname, err)
+func fatal(err string) {
+	fmt.Fprintf(os.Stderr, "%s: %s\n", progname, err)
 	os.Exit(1)
 }
 
@@ -77,17 +82,82 @@ func main() {
 	// parse -o option1,option2,option3=foo ..
 	for _, o := range strings.Split(mopts, ",") {
 		kv := strings.SplitN(o, "=", 2)
-		v := ""
 		if len(kv) > 1 {
-			v = kv[1]
+			opts.BoolOption[kv[0]] = true
+			opts.StrOption[kv[0]] = kv[1]
+		} else {
+			opts.StrOption[kv[0]] = "true"
+			opts.BoolOption[kv[0]] = true
 		}
-		opts.Option[kv[0]] = v
+	}
+
+	config := WebdavFS{}
+	if os.Getuid() != 0 {
+		config.Uid = uint32(os.Getuid())
+		config.Gid = uint32(os.Getgid())
+	}
+
+	if opts.StrOption["uid"] != "" {
+		uid, err := strconv.ParseUint(opts.StrOption["uid"] , 10, 32)
+		if err != nil {
+			fatal("uid option: " + err.Error())
+		}
+		config.Uid = uint32(uid)
+		if os.Getuid() != 0 && os.Getuid() != int(uid) {
+			fatal("uid option: permission denied")
+		}
+	}
+	if opts.StrOption["gid"] != "" {
+		gid, err := strconv.ParseUint(opts.StrOption["gid"] , 10, 32)
+		if err != nil {
+			fatal("gid option: " + err.Error())
+		}
+		config.Gid = uint32(gid)
+		if os.Getuid() != 0 {
+			ok := false
+			if os.Getgid() == int(gid) {
+				ok = true
+			}
+			groups, err := os.Getgroups()
+			if err == nil {
+				for _, gr := range groups {
+					if gr == int(gid) {
+						ok = true
+					}
+				}
+			}
+			if !ok {
+				fatal("gid option: permission denied")
+			}
+		}
+	}
+
+	if opts.StrOption["mode"] != "" {
+		mode, err := strconv.ParseUint(opts.StrOption["mode"] , 8, 32)
+		if err != nil {
+			fatal("mode option: " + err.Error())
+		}
+		config.Mode = uint32(mode)
+	}
+
+	if opts.BoolOption["allow_other"] {
+		if !opts.BoolOption["no_default_permissions"] {
+			if config.Mode == 0 {
+				config.Mode = 0755
+			}
+			opts.StrOption["default_permissions"] = "true"
+			opts.BoolOption["default_permissions"] = true
+		} else {
+			if config.Mode == 0 {
+				config.Mode = 0777
+			}
+		}
 	}
 
 	url := getopt.Arg(0)
 	mountpoint := getopt.Arg(1)
-	username := opts.Option["username"]
-	password := opts.Option["password"]
+	username := opts.StrOption["username"]
+	password := opts.StrOption["password"]
 
 	// for some reason we can end up without a $PATH ..
 	if os.Getenv("PATH") == "" {
@@ -101,7 +171,7 @@ func main() {
 	}
 	err = dav.Mount()
 	if err != nil {
-		fatal(err)
+		fatal(err.Error())
 	}
 
 	if opts.Fake {
@@ -115,22 +185,22 @@ func main() {
 		fuse.MaxReadahead(1024 * 1024),
 	}
 
-	if _, ok := opts.Option["allow_root"]; ok {
+	if opts.BoolOption["allow_root"] {
 		fmo = append(fmo, fuse.AllowRoot())
 	}
-	if _, ok := opts.Option["allow_other"]; ok {
+	if opts.BoolOption["allow_other"] {
 		fmo = append(fmo, fuse.AllowOther())
 	}
-	if _, ok := opts.Option["async_read"]; ok {
+	if opts.BoolOption["async_read"] {
 		fmo = append(fmo, fuse.AsyncRead())
 	}
-	if _, ok := opts.Option["default_permissions"]; ok {
+	if opts.BoolOption["default_permissions"] {
 		fmo = append(fmo, fuse.DefaultPermissions())
 	}
-	if _, ok := opts.Option["nonempty"]; ok {
+	if opts.BoolOption["nonempty"] {
 		fmo = append(fmo, fuse.AllowNonEmptyMount())
 	}
-	if _, ok := opts.Option["ro"]; ok {
+	if opts.BoolOption["ro"] {
 		fmo = append(fmo, fuse.ReadOnly())
 	}
 
@@ -139,7 +209,7 @@ func main() {
 		fmo...,
 	)
 	if err != nil {
-		fatal(err)
+		fatal(err.Error())
 	}
 	defer c.Close()
 
@@ -147,15 +217,15 @@ func main() {
 		Detach()
 	}
 
-	err = fs.Serve(c, NewFS(dav))
+	err = fs.Serve(c, NewFS(dav, config))
 	if err != nil {
-		fatal(err)
+		fatal(err.Error())
 	}
 
 	// check if the mount process has an error to report
 	<-c.Ready
 	if err := c.MountError; err != nil {
-		fatal(err)
+		fatal(err.Error())
 	}
 }
 
