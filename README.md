@@ -69,22 +69,24 @@ Password:
 
 ## Mount options
 
-- allow_oot		If mounted as normal user, allow access by root
-- allow_other		Allow access by others than the mount owner. This also
-			sets "default_permisions"
-- default_permissions	As per fuse documentation
-- no_default_permissions Don't set "default_permissions" with "allow_other"
-- ro			Read only
-- uid			User ID for filesystem
-- gid			Group ID for filesystem.
-- mode			Mode for files/directories on the filesystem (600, 666, etc).
-			Files will never have the executable bit on, directories always.
-- password		Password wofebdav user
-- username		Username of webdav user
-- async_read		As per fuse documentation
-- nonempty		As per fuse documentation
+| Option | Description |
+| --- | --- |
+| allow_oot		| If mounted as normal user, allow access by root |
+| allow_other		| Allow access by others than the mount owner. This also |
+|			| sets "default_permisions" |
+| default_permissions	| As per fuse documentation |
+| no_default_permissions | Don't set "default_permissions" with "allow_other" |
+| ro			| Read only |
+| uid			| User ID for filesystem |
+| gid			| Group ID for filesystem. |
+| mode			| Mode for files/directories on the filesystem (600, 666, etc). |
+|			| Files will never have the executable bit on, directories always. |
+| password		| Password wofebdav user |
+| username		| Username of webdav user |
+| async_read		| As per fuse documentation |
+| nonempty		| As per fuse documentation |
 
-If the webdavfs program is called via "mount -t webdavfs" or as "mount.webdav",
+If the webdavfs program is called via `mount -t webdavfs` or as `mount.webdav`,
 it will fork, re-exec and run in the background. In that case it will remove
 the username and password options from the command line, and communicate them
 via the environment instead.
