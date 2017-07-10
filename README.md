@@ -1,4 +1,4 @@
-# davfs3
+# webdavfs
 
 ## A FUSE filesystem for WEBDAV shares.
 
@@ -37,7 +37,7 @@ Basic filesystem operations.
 - change user/group
 - devices / fifos / chardev / blockdev etc
 - query filesystem size (df / vfsstat)
-- truncate(2) / ftruncate(2) for any other length than "0"
+- truncate(2) / ftruncate(2) for lengths between 1 .. currentfilesize - 1
 
 This is basically because these are mostly just missing properties
 from webdav.
@@ -54,4 +54,44 @@ experience and better performance, here are a few ideas:
 - DELETE Depth 0 for collections (no delete if non-empty)
 - return updated PROPSTAT information after operations
   like PUT / DELETE / MKCOL / MOVE
+
+## How to install and use.
+
+```
+$ go get
+$ go build
+$ su -m
+Password:
+# apt-get install fuse
+# cp webdavfs /sbin/mount.webdavfs
+# mount -t webdavfs -ousername=you,password=pass https://webdav.where.ever/subdir /mnt
+```
+
+## Mount options
+
+- allow_oot		If mounted as normal user, allow access by root
+- allow_other		Allow access by others than the mount owner. This also
+			sets "default_permisions"
+- default_permissions	As per fuse documentation
+- no_default_permissions Don't set "default_permissions" with "allow_other"
+- ro			Read only
+- uid			User ID for filesystem
+- gid			Group ID for filesystem.
+- mode			Mode for files/directories on the filesystem (600, 666, etc).
+			Files will never have the executable bit on, directories always.
+- password		Password wofebdav user
+- username		Username of webdav user
+- async_read		As per fuse documentation
+- nonempty		As per fuse documentation
+
+If the webdavfs program is called via "mount -t webdavfs" or as "mount.webdav",
+it will fork, re-exec and run in the background. In that case it will remove
+the username and password options from the command line, and communicate them
+via the environment instead.
+
+The environment options for username and password are WEBDAV_USERNAME and
+WEBDAV_PASSWORD, respectively.
+
+In the future it will also be possible to read the credentials from a
+configuration file.
 

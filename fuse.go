@@ -420,9 +420,8 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		return
 	}
 	invalid := fuse.SetattrMode | fuse. SetattrUid | fuse.SetattrGid |
-		fuse.SetattrMtime | fuse.SetattrHandle | fuse.SetattrMtimeNow |
-		fuse.SetattrLockOwner | fuse.SetattrCrtime | fuse.SetattrChgtime |
-		fuse.SetattrBkuptime | fuse.SetattrFlags
+		fuse.SetattrBkuptime | fuse.SetattrCrtime | fuse.SetattrChgtime |
+		fuse.SetattrFlags | fuse.SetattrHandle | fuse.SetattrLockOwner
 	v := req.Valid
 	if attrSet(v, invalid) {
 		return fuse.EPERM
@@ -437,12 +436,19 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 
 	nd.Lock()
+	// fake setting mtime if it is roughly unchanged.
+	if attrSet(v, fuse.SetattrMtime) {
+		if nd.LastStat.Add(time.Second).Before(time.Now()) ||
+		   req.Atime.Before(nd.Mtime.Add(-500 * time.Millisecond)) ||
+		   req.Atime.After(nd.Mtime.Add(500 * time.Millisecond)) {
+			return fuse.EPERM
+		}
+	}
+	// atime .. we allow it, but it's not saved.
 	if attrSet(v, fuse.SetattrAtime) {
 		nd.Atime = req.Atime
 	}
-	if attrSet(v, fuse.SetattrAtimeNow) {
-		nd.Atime = time.Now()
-	}
+
 	mode := FS.fileMode
 	if nd.IsDir {
 		mode = FS.dirMode
