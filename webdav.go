@@ -83,6 +83,18 @@ var davToErrnoMap = map[int]syscall.Errno{
 	504:	syscall.ETIMEDOUT,
 }
 
+var userAgent string
+
+func init() {
+	var u syscall.Utsname
+	err := syscall.Uname(&u)
+	if err != nil {
+		userAgent = "fuse-webdavfs/0.1"
+	} else {
+		userAgent = fmt.Sprintf("fuse-webdavfs/0.1 %s (%s)", u.Sysname, u.Machine)
+	}
+}
+
 func davToErrno(err *DavError) (*DavError) {
 	if fe, ok := davToErrnoMap[err.Code]; ok {
 		err.Errnum = fe
@@ -238,6 +250,7 @@ func (d *DavClient) request(method string, path string, b ...interface{}) (*http
 }
 
 func (d *DavClient) do(req *http.Request) (resp *http.Response, err error) {
+	req.Header.Set("User-Agent", userAgent)
 	resp, err = d.cc.Do(req)
 	if err == nil && !statusIsValid(resp) {
 		err = davToErrno(&DavError{
