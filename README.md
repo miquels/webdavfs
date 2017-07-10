@@ -42,6 +42,96 @@ Basic filesystem operations.
 This is basically because these are mostly just missing properties
 from webdav.
 
+## How to install and use.
+
+First you need to install golang, git, and set up your environment:
+
+```
+$ su -m
+Password:
+# apt-get install golang
+# apt-get install git
+# exit
+$ mkdir pkg bin src
+$ export GOPATH=$HOME
+```
+
+Now with go and git installed, get a copy of this github repository:
+
+```
+$ cd src
+$ mkdir -p github.com/miquels
+$ cd github.com/miquels
+$ git clone git@github.com:miquels/webdavfs.git
+$ cd webdavfs
+```
+
+You're now ready to build the binary:
+
+```
+$ go get
+$ go build
+```
+
+And install it:
+
+````
+$ su -m
+Password:
+# apt-get install fuse
+# cp webdavfs /sbin/mount.webdavfs
+```
+
+Using it is simple as:
+```
+# mount -t webdavfs -ousername=you,password=pass https://webdav.where.ever/subdir /mnt
+```
+
+## Mount options
+
+| Option | Description |
+| --- | --- |
+| allow_root		| If mounted as normal user, allow access by root |
+| allow_other		| Allow access by others than the mount owner. This |
+|			| also sets "default_permisions" |
+| default_permissions	| As per fuse documentation |
+| no_default_permissions | Don't set "default_permissions" with "allow_other" |
+| ro			| Read only |
+| uid			| User ID for filesystem |
+| gid			| Group ID for filesystem. |
+| mode			| Mode for files/directories on the filesystem (600, 666, etc). |
+|			| Files will never have the executable bit on, directories always. |
+| password		| Password wofebdav user |
+| username		| Username of webdav user |
+| async_read		| As per fuse documentation |
+| nonempty		| As per fuse documentation |
+| maxconns              | Maximum number of parallel connections to the webdav
+|                       | server (default 8)
+| maxidleconns          | Maximum number of idle connections (default 8)
+
+If the webdavfs program is called via `mount -t webdavfs` or as `mount.webdav`,
+it will fork, re-exec and run in the background. In that case it will remove
+the username and password options from the command line, and communicate them
+via the environment instead.
+
+The environment options for username and password are WEBDAV_USERNAME and
+WEBDAV_PASSWORD, respectively.
+
+In the future it will also be possible to read the credentials from a
+configuration file.
+
+## TODO
+
+- maxconns doesn't work yet. this is complicated with the Go HTTP client.
+- add configuration file
+- add more configurable (and nice) debug logging
+- timeout handling and interrupt handling
+- we use busy-loop locking, yuck. use semaphores built on channels.
+- rewrite fuse.go code to use the bazil/fuse abstraction instead of bazil/fuse/fs.  
+  perhaps switch to  
+  - https://github.com/hanwen/go-fuse
+  - https://github.com/jacobsa/fuse
+
 ## Unix filesystem extensions for webdav.
 
 Not ever going to happen, but if you wanted a more unix-like
@@ -54,46 +144,4 @@ experience and better performance, here are a few ideas:
 - DELETE Depth 0 for collections (no delete if non-empty)
 - return updated PROPSTAT information after operations
   like PUT / DELETE / MKCOL / MOVE
-
-## How to install and use.
-
-```
-$ go get
-$ go build
-$ su -m
-Password:
-# apt-get install fuse
-# cp webdavfs /sbin/mount.webdavfs
-# mount -t webdavfs -ousername=you,password=pass https://webdav.where.ever/subdir /mnt
-```
-
-## Mount options
-
-| Option | Description |
-| --- | --- |
-| allow_oot		| If mounted as normal user, allow access by root |
-| allow_other		| Allow access by others than the mount owner. This also |
-|			| sets "default_permisions" |
-| default_permissions	| As per fuse documentation |
-| no_default_permissions | Don't set "default_permissions" with "allow_other" |
-| ro			| Read only |
-| uid			| User ID for filesystem |
-| gid			| Group ID for filesystem. |
-| mode			| Mode for files/directories on the filesystem (600, 666, etc). |
-|			| Files will never have the executable bit on, directories always. |
-| password		| Password wofebdav user |
-| username		| Username of webdav user |
-| async_read		| As per fuse documentation |
-| nonempty		| As per fuse documentation |
-
-If the webdavfs program is called via `mount -t webdavfs` or as `mount.webdav`,
-it will fork, re-exec and run in the background. In that case it will remove
-the username and password options from the command line, and communicate them
-via the environment instead.
-
-The environment options for username and password are WEBDAV_USERNAME and
-WEBDAV_PASSWORD, respectively.
-
-In the future it will also be possible to read the credentials from a
-configuration file.
 
