@@ -45,7 +45,19 @@ from webdav.
 
 ## How to install and use.
 
-First you need to install golang, git, fuse, and set up your environment:
+First you need to install golang, git, fuse, and set up your environment.
+
+Note that you need at least Go 1.4 (probably 1.6). If you're on Debian,
+everything before Debian 8 (jessie) is too old. On jessie you need to
+add the jessie-backports source, then install go from backports.
+
+```
+# echo "deb http://ftp.debian.org/debian jessie-backports main" > /etc/apt/sources.list.d/jessie-backports.list"
+# apt-get update
+# apt-get install -t jessie-backports golang
+```
+
+Then if your Go version is up to date, continue:
 
 ```
 $ su -m
