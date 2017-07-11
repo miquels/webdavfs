@@ -65,7 +65,7 @@ Now with go and git installed, get a copy of this github repository:
 $ cd src
 $ mkdir -p github.com/miquels
 $ cd github.com/miquels
-$ git clone git@github.com:miquels/webdavfs.git
+$ git clone https://github.com/miquels/webdavfs
 $ cd webdavfs
 ```
 
