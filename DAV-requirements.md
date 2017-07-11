@@ -1,5 +1,5 @@
 
-# Webdav and HTTP requirements for this filesystem driver.
+# Webdav and HTTP requirements for WebdavFS.
 
 ## for readonly purposes
 
@@ -38,7 +38,7 @@ partial put.
   or not correctly.
 - Partial PUT support.  
   This means writing just a part of a file, updating it in-place, instead
-  of replacing an existing file. This driver detects what webserver it is
+  of replacing an existing file. webdavFS detects what webserver it is
   talking  to. If it's Apache it uses PUT + Content-Range, if it's
   SabreDAV it uses PATCH + X-Update-Range. For more info, see:  
   https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare  
