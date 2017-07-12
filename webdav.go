@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -95,13 +96,7 @@ var davToErrnoMap = map[int]syscall.Errno{
 var userAgent string
 
 func init() {
-	var u syscall.Utsname
-	err := syscall.Uname(&u)
-	if err != nil {
-		userAgent = "fuse-webdavfs/0.1"
-	} else {
-		userAgent = fmt.Sprintf("fuse-webdavfs/0.1 %s (%s)", u.Sysname, u.Machine)
-	}
+	userAgent = fmt.Sprintf("fuse-webdavfs/0.1 (Go) %s (%s)", runtime.GOOS, runtime.GOARCH)
 }
 
 func davToErrno(err *DavError) (*DavError) {
