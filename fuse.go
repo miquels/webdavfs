@@ -3,6 +3,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"syscall"
 	"strconv"
@@ -26,6 +27,7 @@ type WebdavFS struct {
 	Mode		uint32
 	dirMode		os.FileMode
 	fileMode	os.FileMode
+	blockSize	uint32
 	root		*Node
 }
 var FS *WebdavFS
@@ -61,6 +63,13 @@ func NewFS(d *DavClient, config WebdavFS) *WebdavFS {
 		FS.dirMode |= 0100
 	}
 	FS.dirMode |= os.ModeDir
+
+	FS.blockSize = 4096
+	if runtime.GOOS == "darwin" {
+		// if we set this on osxfuse, _all_ I/O will
+		// be limited to FS.blockSize bytes.
+		FS.blockSize = 0
+	}
 
 	return FS
 }
@@ -303,7 +312,7 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 				Nlink: 1,
 				Uid: FS.Uid,
 				Gid: FS.Gid,
-				BlockSize: 4096,
+				BlockSize: FS.blockSize,
 			}
 			// dbgPrintf("fuse: Getattr: return stat: %+v\n", attr)
 		}
