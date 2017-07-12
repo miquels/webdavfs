@@ -255,7 +255,8 @@ func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (
 			blen = -1
 		}
 	}
-	req, err = http.NewRequest(method, d.Url + path, body)
+	u := url.URL{ Path: path }
+	req, err = http.NewRequest(method, d.Url + u.EscapedPath(), body)
 	if err != nil {
 		return
 	}
@@ -375,6 +376,9 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Pro
 	x := strings.Join(a, "")
 
 	req, err := d.buildRequest("PROPFIND", path, x)
+	if err != nil {
+		return
+	}
 	dp := "0"
 	if depth > 0 {
 		dp = "1"
