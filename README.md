@@ -27,6 +27,7 @@ Basic filesystem operations.
 
 - files: create/delete/read/write/truncate/seek
 - directories: mkdir rmdir readdir
+- query filesystem size (df / vfsstat)
 
 ## What is not yet working
 
@@ -37,7 +38,6 @@ Basic filesystem operations.
 - change permissions (all files are 644, all dirs are 755)
 - change user/group
 - devices / fifos / chardev / blockdev etc
-- query filesystem size (df / vfsstat)
 - truncate(2) / ftruncate(2) for lengths between 1 .. currentfilesize - 1
 
 This is basically because these are mostly just missing properties

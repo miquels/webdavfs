@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"strconv"
 	"time"
 
 	"golang.org/x/net/context"
@@ -66,6 +67,41 @@ func NewFS(d *DavClient, config WebdavFS) *WebdavFS {
 
 func (fs *WebdavFS) Root() (fs.Node, error) {
 	return fs.root, nil
+}
+
+func (fs *WebdavFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
+	wanted := []string{ "quota-available-bytes", "quota-used-bytes" }
+	props, err := dav.PropFind("/", 0, wanted)
+	if err != nil {
+		return err
+	}
+
+	negOne := int64(-1)
+	total := uint64(negOne)
+	free := uint64(negOne)
+
+	if len(props) == 1 {
+		spaceUsed, _ := strconv.ParseUint(props[0].SpaceUsed, 10, 64)
+		spaceFree, _ := strconv.ParseUint(props[0].SpaceFree, 10, 64)
+		if spaceUsed > 0 || spaceFree > 0 {
+			used := (spaceUsed + 4095) / 4096
+			free =  (spaceFree + 4095) / 4096
+			if free > 0 {
+				total = used + free
+			}
+		}
+	}
+
+	data := fuse.StatfsResponse{
+		Blocks: total,
+		Bfree:	free,
+		Bavail:	free,
+		Bsize:	4096,
+		Frsize:	4096,
+		Namelen: 255,
+	}
+	*resp = data
+	return nil
 }
 
 func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node, err error) {

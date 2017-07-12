@@ -57,6 +57,8 @@ type Props struct {
 	LastModified	string		`xml:"getlastmodified"`
 	Etag		string		`xml:"getetag"`
 	ContentLength	string		`xml:"getcontentlength"`
+	SpaceUsed	string		`xml:"quota-used-bytes"`
+	SpaceFree	string		`xml:"quota-available-bytes"`
 }
 
 type ResourceType struct {
