@@ -21,6 +21,11 @@ SabreDav (a php webserver server library, used by e.g. NextCloud)
 for partial writes. So we detect if it's Apache or SabreDav we're talking
 to and then use their specific methods to partially update files.
 
+If no support for partial writes is detected, mount.webdavfs will
+print a warning and mount the filesystem anyway, but you will not be
+able to create files or write to files. But if you only need to read
+files it's still way faster than davfs2 :)
+
 ## What is working
 
 Basic filesystem operations.
@@ -52,7 +57,7 @@ everything before Debian 8 (jessie) is too old. On jessie you need to
 add the jessie-backports source, then install go from backports.
 
 ```
-# echo "deb http://ftp.debian.org/debian jessie-backports main" > /etc/apt/sources.list.d/jessie-backports.list"
+# echo "deb http://ftp.debian.org/debian jessie-backports main" > /etc/apt/sources.list.d/jessie-backports.list
 # apt-get update
 # apt-get install -t jessie-backports golang
 ```
