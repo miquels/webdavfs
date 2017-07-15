@@ -42,6 +42,11 @@ func flagSet(v fuse.OpenFlags, f fuse.OpenFlags) bool {
 }
 
 func NewFS(d *DavClient, config WebdavFS) *WebdavFS {
+
+	if trace(T_FUSE) {
+		tPrintf("NewFS %s", tJson(config))
+	}
+
 	dav = d
 	FS = &config
 	FS.root = rootNode
@@ -78,11 +83,21 @@ func (fs *WebdavFS) Root() (fs.Node, error) {
 	return fs.root, nil
 }
 
-func (fs *WebdavFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
+func (fs *WebdavFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Statfs()")
+		defer func() {
+			if err != nil {
+				tPrintf("Statfs(): %v", err)
+			} else {
+				tPrintf("Statfs(): %v", resp)
+			}
+		}()
+	}
 	wanted := []string{ "quota-available-bytes", "quota-used-bytes" }
 	props, err := dav.PropFind("/", 0, wanted)
 	if err != nil {
-		return err
+		return
 	}
 
 	negOne := int64(-1)
@@ -110,10 +125,20 @@ func (fs *WebdavFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *f
 		Namelen: 255,
 	}
 	*resp = data
-	return nil
+	return
 }
 
 func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node, err error) {
+	if trace(T_FUSE) {
+		tPrintf("Mkdir(%s)", req.Name)
+		defer func() {
+			if err != nil {
+				tPrintf("Mkdir(%s): %v", req.Name, err)
+			} else {
+				tPrintf("Mkdir OK")
+			}
+		}()
+	}
 	nd.incMetaRefThenLock()
 	path := joinPath(nd.getPath(), req.Name)
 	nd.Unlock()
@@ -136,6 +161,16 @@ func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node,
 }
 
 func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.Node) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Rename(%s, %s)", req.OldName, req.NewName)
+		defer func() {
+			if err != nil {
+				tPrintf("Rename(%s, %s): %v", req.OldName, req.NewName, err)
+			} else {
+				tPrintf("Rename OK")
+			}
+		}()
+	}
 	var lock1, lock2 *Node
 	var oldPath, newPath string
 	destNode := destDir.(*Node)
@@ -183,8 +218,6 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 		}
 	}
 
-	dbgPrintf("fuse: Rename %s -> %s\n", oldPath, newPath)
-
 	isDir := false
 	node := nd.getNode(req.OldName)
 	if node == nil {
@@ -220,6 +253,16 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 }
 
 func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Remove(%s)", req.Name)
+		defer func() {
+			if err != nil {
+				tPrintf("Remove(%s): %v", req.Name, err)
+			} else {
+				tPrintf("Remove OK")
+			}
+		}()
+	}
 	nd.incMetaRefThenLock()
 	path := joinPath(nd.getPath(), req.Name)
 	nd.Unlock()
@@ -261,6 +304,16 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 }
 
 func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Attr(%s)", nd.Name)
+		defer func() {
+			if err != nil {
+				tPrintf("Attr(%s): %v", nd.Name, err)
+			} else {
+				tPrintf("Attr(%s): %v", nd.Name, tJson(attr))
+			}
+		}()
+	}
 	if nd.Deleted {
 		err = fuse.Errno(syscall.ESTALE)
 		return
@@ -270,7 +323,6 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 	dnode := nd.Dnode
 	if !nd.statInfoFresh() {
-		dbgPrintf("fuse: Getattr \"%s\" (%s)\n", nd.Name, nd.getPath())
 		path := nd.getPath()
 		if nd.IsDir {
 			path = addSlash(path)
@@ -280,14 +332,12 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 			nd.statInfoTouch()
 		}
 	} else {
-		dbgPrintf("fuse: Getattr \"%s\" (%s) (cached)\n", nd.Name, nd.getPath())
 	}
 
 	if err == nil {
 
 		// Sanity check.
 		if nd.Name != "" && dnode.IsDir != nd.IsDir {
-			dbgPrintf("fuse: Getattr \"%s\" isdir %v != isdir %v\n", dnode.Name, dnode.IsDir, nd.IsDir)
 			nd.invalidateThisNode()
 			err = fuse.Errno(syscall.ESTALE)
 		} else {
@@ -314,17 +364,23 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 				Gid: FS.Gid,
 				BlockSize: FS.blockSize,
 			}
-			// dbgPrintf("fuse: Getattr: return stat: %+v\n", attr)
 		}
-	} else {
-		// dbgPrintf("fuse: Getattr: stat failed %v\n", err)
 	}
 	nd.decIoRef()
 	return
 }
 
 func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error) {
-	dbgPrintf("fuse: Lookup \"%s in \"%s\"\n", name, nd.Name)
+	if trace(T_FUSE) {
+		tPrintf("Lookup(%s)", name)
+		defer func() {
+			if err != nil {
+				tPrintf("Lookup(%s): %v", name, err)
+			} else {
+				tPrintf("Lookup(%s): OK", name)
+			}
+		}()
+	}
 	nd.incIoRef()
 	defer nd.decIoRef()
 
@@ -343,20 +399,26 @@ func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error)
 	dnode, err := dav.Stat(path)
 
 	if err == nil {
-		dbgPrintf("fuse: Lookup ok add %s\n", name)
 		node := nd.addNode(dnode, true)
 		rn = node
-	} else {
-		dbgPrintf("fuse: Lookup %s failed: %s\n", name, err)
 	}
 	nd.decIoRef()
 	return
 }
 
 func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
+	if trace(T_FUSE) {
+		tPrintf("ReaddirAll(%s)", nd.Name)
+		defer func() {
+			if err != nil {
+				tPrintf("ReadDirAll(%s): %v", nd.Name, err)
+			} else {
+				tPrintf("ReadDirAll(%s): %d entries", nd.Name, len(dd))
+			}
+		}()
+	}
 	nd.incIoRef()
 	path := nd.getPath()
-	dbgPrintf("fuse: ReadDirAll \"%s\" (%s)\n", nd.Name, path)
 	dirs, err := dav.Readdir(path, true)
 	if err == nil {
 		nd.Lock()
@@ -398,7 +460,17 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
 	excl  := flagSet(req.Flags, fuse.OpenExclusive)
-	dbgPrintf("fuse: Create %s: trunc %v read %v write %v excl %v\n", req.Name, trunc, read, write, excl)
+	if trace(T_FUSE) {
+		tPrintf("Create(%s): trunc=%v read=%v write=%v excl=%v",
+			req.Name, trunc, read, write, excl)
+		defer func() {
+			if err != nil {
+				tPrintf("Create(%s): %v", req.Name, err)
+			} else {
+				tPrintf("Create(%s): OK", req.Name)
+			}
+		}()
+	}
 	path = joinPath(path, req.Name)
 	created := false
 	if trunc {
@@ -432,6 +504,9 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 
 
 func (nd *Node) Forget() {
+	if trace(T_FUSE) {
+		tPrintf("Forget(%s)", nd.Name)
+	}
 	// XXX FIXME add some sanity checks here-
 	// see if refcnt == 0, subdirs are gone
 	nd.Lock()
@@ -462,6 +537,16 @@ func (nd *Node) ftruncate(ctx context.Context, size uint64) (err error) {
 }
 
 func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Setattr(%s, %s)", nd.Name, tJson(req))
+		defer func() {
+			if err != nil {
+				tPrintf("Setattr(%s): %v", nd.Name, err)
+			} else {
+				tPrintf("Setattr(%s): OK", nd.Name)
+			}
+		}()
+	}
 	if nd.Deleted {
 		err = fuse.Errno(syscall.ESTALE)
 		return
@@ -475,7 +560,6 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 
 	if attrSet(v, fuse.SetattrSize) {
-		// dbgPrintf("fuse: Setattr %s: size %d\n", nd.Name, req.Size)
 		err = nd.ftruncate(ctx, req.Size)
 		if err != nil {
 			return
@@ -520,6 +604,14 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 }
 
 func (nf *Node) Fsync(ctx context.Context, req *fuse.FsyncRequest) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Fsync(%s)", nf.Name)
+		defer func() {
+			if err != nil {
+				tPrintf("Fsync(%s): %v", nf.Name, err)
+			}
+		}()
+	}
 	if nf.Deleted {
 		err = fuse.Errno(syscall.ESTALE)
 		return
@@ -528,6 +620,16 @@ func (nf *Node) Fsync(ctx context.Context, req *fuse.FsyncRequest) (err error) {
 }
 
 func (nf *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Read(%s, %d, %d)", nf.Name, req.Offset, req.Size)
+		defer func() {
+			if err != nil {
+				tPrintf("Read(%s): %v", nf.Name, err)
+			} else {
+				tPrintf("Read(%s): %d bytes", nf.Name, len(resp.Data))
+			}
+		}()
+	}
 	if nf.Deleted {
 		err = fuse.Errno(syscall.ESTALE)
 		return
@@ -553,8 +655,17 @@ func (nf *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Read
 }
 
 func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) (err error) {
+	if trace(T_FUSE) {
+		tPrintf("Write(%s, %d, %d)", nf.Name, req.Offset, len(req.Data))
+		defer func() {
+			if err != nil {
+				tPrintf("Write(%s): %v", nf.Name, err)
+			} else {
+				tPrintf("Write(%s): %d bytes", nf.Name, len(req.Data))
+			}
+		}()
+	}
 	if nf.Deleted {
-		dbgPrintf("fuse: Write: %s (node @ %p) DELETED\n", nf.Name, nf)
 		err = fuse.Errno(syscall.ESTALE)
 		return
 	}
@@ -564,7 +675,6 @@ func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wr
 	}
 	nf.incIoRef()
 	path := nf.getPath()
-	dbgPrintf("fuse: Write: %s (node @ %p)\n", path, nf)
 	_, err = dav.PutRange(path, req.Data, req.Offset, false, false)
 	if err == nil {
 		resp.Size = len(req.Data)
@@ -574,23 +684,30 @@ func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wr
 			nf.Size = sz
 		}
 		nf.Unlock()
-	} else {
-		dbgPrintf("fuse: Write: failed: %v\n", err)
 	}
 	nf.decIoRef()
 	return
 }
 
-func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	if nf.IsDir {
-		return nf, nil
-	}
-
-	// truncate if we need to.
+func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (handle fs.Handle, err error) {
 	trunc := flagSet(req.Flags, fuse.OpenTruncate)
 	read  := req.Flags.IsReadWrite() || req.Flags.IsReadOnly()
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
-	dbgPrintf("fuse: Open %s: trunc %v read %v write %v\n", nf.Name, trunc, read, write)
+
+	if trace(T_FUSE) {
+		tPrintf("Open(%s): trunc=%v read=%v write=%v", nf.Name, trunc, read, write)
+		defer func() {
+			if err != nil {
+				tPrintf("Open(%s): %v", nf.Name, err)
+			} else {
+				tPrintf("Open(%s): OK", nf.Name)
+			}
+		}()
+	}
+	if nf.IsDir {
+		handle = nf
+		return
+	}
 
 	nf.incIoRef()
 	path := nf.getPath()
@@ -617,10 +734,9 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	}
 
 	nf.decIoRef()
-
-	if err != nil {
-		return nil, err
+	if err == nil {
+		handle = nf
 	}
-	return nf, nil
+	return
 }
 

@@ -18,9 +18,7 @@ func init () {
 }
 
 func dbgPrintf(format string, args ...interface{}) {
-	if opts.Debug {
-		dbgChan <- fmt.Sprintf(format, args...)
-	}
+	dbgChan <- fmt.Sprintf(format, args...)
 }
 
 func dbgJson(obj interface{}) string {

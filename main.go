@@ -13,7 +13,7 @@ import (
 )
 
 type Opts struct {
-	Debug		bool
+	Trace		string
 	Fake		bool
 	NoMtab		bool
 	Sloppy		bool
@@ -88,7 +88,7 @@ func parseUInt32(s string, opt string) uint32 {
 
 func main() {
 
-	getopt.Flag(&opts.Debug, 'd', "enable debugging")
+	getopt.Flag(&opts.Trace, 'd', "trace options")
 	getopt.Flag(&opts.NoMtab, 'n', "do not uodate /etc/mtab (obsolete)")
 	getopt.Flag(&opts.Sloppy, 's', "ignore unknown mount options")
 	getopt.Flag(&opts.Fake, 'f', "do everything but the actual mount")
@@ -132,6 +132,11 @@ func main() {
 			opts.StrOption[kv[0]] = "true"
 			opts.BoolOption[kv[0]] = true
 		}
+	}
+
+	err = traceOpts(opts.Trace)
+	if err != nil {
+		fatal(err.Error())
 	}
 
 	if strings.HasPrefix(progname, "mount.") {

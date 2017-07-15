@@ -279,6 +279,24 @@ func (d *DavClient) request(method string, path string, b ...interface{}) (*http
 
 func (d *DavClient) do(req *http.Request) (resp *http.Response, err error) {
 	req.Header.Set("User-Agent", userAgent)
+
+	if trace(T_HTTP_REQUEST) {
+		tPrintf("%s %s HTTP/1.1", req.Method, req.URL.String())
+		if trace(T_HTTP_HEADERS) {
+			tPrintf("%s", tHeaders(req.Header, " "))
+		}
+		defer func() {
+			if err != nil {
+				tPrintf("%s request error: %v", req.Method, err)
+			} else {
+				tPrintf("%s %s", resp.Proto, resp.Status)
+				if trace(T_HTTP_HEADERS) {
+					tPrintf("%s", tHeaders(resp.Header, " "))
+				}
+			}
+		}()
+	}
+
 	resp, err = d.cc.Do(req)
 	if err == nil && !statusIsValid(resp) {
 		err = davToErrno(&DavError{
@@ -360,6 +378,17 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Pro
 	d.semAcquire()
 	defer d.semRelease()
 
+	if trace(T_WEBDAV) {
+		tPrintf("Propfind(%s, %d, %v", path, depth, props)
+		defer func() {
+			if err != nil {
+				tPrintf("Propfind: %v", err)
+				return
+			}
+			tPrintf("Propfind: returns %v", tJson(ret))
+		}()
+	}
+
 	a := append([]string{}, `<?xml version="1.0" encoding="utf-8" ?><D:propfind xmlns:D='DAV:'>`)
 	if len(props) == 0 {
 		a = append(a, mostProps)
@@ -401,8 +430,6 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Pro
 	if err != nil {
 		return
 	}
-
-	// dbgPrintf("PROPFIND: %s\n%+v\n", resp.Status, string(contents))
 
 	obj := MultiStatus{}
 	err = xml.Unmarshal(contents, &obj)
@@ -453,16 +480,12 @@ func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string)
 		if daverr.Code / 100 != 3 || daverr.Location == "" {
 			return
 		}
-		// dbgPrintf("PropFindWithRedirect: to %s\n", daverr.Location)
 		url, err2 := url.ParseRequestURI(daverr.Location)
 		if err2 != nil {
-			// dbgPrintf("Bad location\n")
 			return
 		}
 		// if it's just a "this is a directory" redirect, retry.
-		// dbgPrintf("Compare %s and %s\n", url.Path, d.base + path + "/")
 		if url.Path == d.base + path + "/" {
-			// dbgPrintf("Retry %s\n", path + "/")
 			ret, err = d.PropFind(path + "/", depth, props)
 		}
 	}
@@ -470,8 +493,19 @@ func (d *DavClient) PropFindWithRedirect(path string, depth int, props []string)
 }
 
 func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
+
+	if trace(T_WEBDAV) {
+		tPrintf("Readdir(%s, %v", path, detail)
+		defer func() {
+			if err != nil {
+				tPrintf("Readdir: %v", err)
+				return
+			}
+			tPrintf("Readdir: returns %v", tJson(ret))
+		}()
+	}
+
 	path = addSlash(path)
-	// dbgPrintf("Readdir %s\n", path)
 	props, err := d.PropFind(path, 1, nil)
 	if err != nil {
 		return
@@ -484,7 +518,6 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 		if strings.Index(name, "/") >= 0 {
 			continue
 		}
-		// dbgPrintf("DBG Readdir add name [%s]\n", name)
 		if name == "._.DS_Store" || name == ".DS_Store" {
 			continue
 		}
@@ -503,7 +536,18 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 }
 
 func (d *DavClient) Stat(path string) (ret Dnode, err error) {
-	dbgPrintf("webdav: Stat %s\n", path)
+
+	if trace(T_WEBDAV) {
+		tPrintf("Stat(%s)", path)
+		defer func() {
+			if err != nil {
+				tPrintf("Stat: %v", err)
+				return
+			}
+			tPrintf("Readdir: returns %v", tJson(ret))
+		}()
+	}
+
 	props, err := d.PropFindWithRedirect(path, 0, nil)
 	if err != nil {
 		return
@@ -525,6 +569,17 @@ func (d *DavClient) Stat(path string) (ret Dnode, err error) {
 }
 
 func (d *DavClient) Get(path string) (data []byte, err error) {
+	if trace(T_WEBDAV) {
+		tPrintf("Get(%s)", path)
+		defer func() {
+			if err != nil {
+				tPrintf("Get: %v", err)
+				return
+			}
+			tPrintf("Get: returns %d bytes", len(data))
+		}()
+	}
+
 	return d.GetRange(path, -1, -1)
 }
 
@@ -532,7 +587,16 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 	d.semAcquire()
 	defer d.semRelease()
 
-	dbgPrintf("webdav: GetRange %s %d %d\n", path, offset, length)
+	if trace(T_WEBDAV) && length >= 0 {
+		tPrintf("GetRange(%s, %d, %d)", path, offset, length)
+		defer func() {
+			if err != nil {
+				tPrintf("GetRange: %v", err)
+				return
+			}
+			tPrintf("GetRange: returns %d bytes", len(data))
+		}()
+	}
 	req, err := d.buildRequest("GET", path)
 	if err != nil {
 		return
@@ -542,18 +606,14 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 		partial = true
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset + int64(length) - 1))
 	}
-	// dbgPrintf("webdav: GetRange: req header: %+v\n", req.Header)
 	resp, err := d.do(req)
 	if err != nil {
-		dbgPrintf("webdav: GetRange: READ ERROR %s\n", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	// dbgPrintf("webdav: GetRange: resp header: %+v\n", resp.Header)
 	if !statusIsValid(resp) {
 		err = errors.New(resp.Status)
-		dbgPrintf("webdav: GetRange: READ ERROR %s\n", err)
 		return
 	}
 	if partial && resp.StatusCode != 206 {
@@ -563,9 +623,7 @@ func (d *DavClient) GetRange(path string, offset int64, length int) (data []byte
 		})
 		return
 	}
-	// dbgPrintf("webdav: GetRange: resp header: %+v\n", resp.Header)
 	data, err = ioutil.ReadAll(resp.Body)
-	// dbgPrintf("webdav: GetRange: READ OK %d bytes\n", len(data))
 	if len(data) > length {
 		data = data[:length]
 	}
@@ -576,13 +634,22 @@ func (d *DavClient) Mkcol(path string) (err error) {
 	d.semAcquire()
 	defer d.semRelease()
 
+	if trace(T_WEBDAV) {
+		tPrintf("Mkcol(%s)", path)
+		defer func() {
+			if err != nil {
+				tPrintf("Mkcol: %v", err)
+				return
+			}
+			tPrintf("Mkcol: OK")
+		}()
+	}
 	req, err := d.buildRequest("MKCOL", path)
 	if err != nil {
 		return
 	}
 	resp, err := d.do(req)
 	defer drainBody(resp)
-	// dbgPrintf("webdav: Mkcol: reply %+v\n", resp.Header)
 	if err != nil {
 		return
 	}
@@ -593,13 +660,22 @@ func (d *DavClient) Delete(path string) (err error) {
 	d.semAcquire()
 	defer d.semRelease()
 
+	if trace(T_WEBDAV) {
+		tPrintf("Delete(%s)", path)
+		defer func() {
+			if err != nil {
+				tPrintf("Delete: %v", err)
+				return
+			}
+			tPrintf("Delete: OK")
+		}()
+	}
 	req, err := d.buildRequest("DELETE", path)
 	if err != nil {
 		return
 	}
 	resp, err := d.do(req)
 	defer drainBody(resp)
-	// dbgPrintf("webdav: Delete reply %+v\n", resp.Header)
 	if err != nil {
 		return
 	}
@@ -610,7 +686,16 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 	d.semAcquire()
 	defer d.semRelease()
 
-	dbgPrintf("webdav: Move: %s -> %s\n", oldPath, newPath)
+	if trace(T_WEBDAV) {
+		tPrintf("Move(%s, %s)", oldPath, newPath)
+		defer func() {
+			if err != nil {
+				tPrintf("Move: %v", err)
+				return
+			}
+			tPrintf("Move: OK")
+		}()
+	}
 	req, err := d.buildRequest("MOVE", oldPath)
 	if err != nil {
 		return
@@ -623,7 +708,6 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 	req.Header.Set("Destination", joinPath(d.Url, newPath))
 	resp, err := d.do(req)
 	defer drainBody(resp)
-	dbgPrintf("webdav: Move: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
@@ -639,7 +723,16 @@ func (d *DavClient) Move(oldPath, newPath string) (err error) {
 
 // https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
 func (d *DavClient) apachePutRange(path string, data []byte, offset int64, create bool, excl bool) (created bool, err error) {
-	// dbgPrintf("webdav: apachePutRange %d %d @ %s\n", offset, len(data), path)
+	if trace(T_WEBDAV) {
+		tPrintf("apachePutRange(%s, %d, %d, %v, %v)", path, len(data), offset, create, excl)
+		defer func() {
+			if err != nil {
+				tPrintf("apachePutRange: %v", err)
+				return
+			}
+			tPrintf("apachePutRange: OK, created: %v", created)
+		}()
+	}
 	req, err := d.buildRequest("PUT", path, data)
 
 	end := offset + int64(len(data)) - 1
@@ -654,11 +747,9 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64, creat
 		req.Header.Set("If-Match", "*")
 	}
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", offset, end))
-	dbgPrintf("webdav: apachePutRange: req.header %+v\n", req.Header)
 
 	resp, err := d.do(req)
 	defer drainBody(resp)
-	dbgPrintf("webdav: apachePutRange: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
@@ -668,7 +759,17 @@ func (d *DavClient) apachePutRange(path string, data []byte, offset int64, creat
 
 // http://sabre.io/dav/http-patch/
 func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, create bool, excl bool) (created bool, err error) {
-	// dbgPrintf("webdav: sabrePutRange: %d %d @ %s\n", offset, len(data), path)
+
+	if trace(T_WEBDAV) {
+		tPrintf("sabrePutRange(%s, %d, %d, %v, %v)", path, len(data), offset, create, excl)
+		defer func() {
+			if err != nil {
+				tPrintf("sabrePutRange: %v", err)
+				return
+			}
+			tPrintf("sabrePutRange: OK, created: %v", created)
+		}()
+	}
 
 	req, err := d.buildRequest("PATCH", path, data)
 
@@ -688,7 +789,6 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, create
 
 	resp, err := d.do(req)
 	defer drainBody(resp)
-	// dbgPrintf("webdav: sabrePutRange: reply %s %+v\n", resp.Status, resp.Header)
 	if err != nil {
 		return
 	}
@@ -718,7 +818,6 @@ func (d *DavClient) CanPutRange() bool {
 func (d *DavClient) Put(path string, data []byte, create bool, excl bool) (created bool, err error) {
 	d.semAcquire()
 	defer d.semRelease()
-	// dbgPrintf("webdav: Put: %d @ %s\n", len(data), path)
 
 	if !d.CanPutRange() {
 		err = davToErrno(&DavError{
