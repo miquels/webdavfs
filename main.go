@@ -77,6 +77,9 @@ func rebuildOptions(url, path string) {
 	}
 	stropts := []string{}
 	for _, o := range strings.Split(opts.RawOptions, ",") {
+		if o == "" {
+			continue
+		}
 		if strings.HasPrefix(o, "username=") {
 			os.Setenv("WEBDAV_USERNAME", o[9:])
 		} else if strings.HasPrefix(o, "password=") {
