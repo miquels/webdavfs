@@ -12,13 +12,9 @@ import (
 
 var isDaemonEnv = "GO_IS_DAEMONIZED"
 
-func getDevNullFile(minFd int) (file *os.File, err error) {
-	fd := -1
-	for fd < minFd {
-		file, err = os.OpenFile("/dev/null", os.O_RDWR, 0666)
-		if err != nil {
-			return
-		}
+func openDevNull() (file *os.File, fd int, err error) {
+	file, err = os.OpenFile("/dev/null", os.O_RDWR, 0666)
+	if err == nil {
 		fd = int(file.Fd())
 	}
 	return
@@ -60,7 +56,7 @@ func isSetUidGid() bool {
 // I/O to stdout / stderr, and SIGHUP/INT/QUIT/TERM signals. When
 // the child calls Detach() we exit.
 func Daemonize() error {
-	devnull, err := getDevNullFile(3)
+	devnull, _, err := openDevNull()
 	if err != nil {
 		return err
 	}
@@ -136,11 +132,10 @@ func IsDaemon() (bool) {
 
 // Tell parent to exit.
 func Detach() error {
-	fh, err := getDevNullFile(3)
+	fh, fd, err := openDevNull()
 	if err != nil {
 		return err
 	}
-	fd := int(fh.Fd())
 	syscall.Dup2(fd, 1)
 	syscall.Dup2(fd, 2)
 	fh.Close()

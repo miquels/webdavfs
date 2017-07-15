@@ -85,12 +85,12 @@ func (fs *WebdavFS) Root() (fs.Node, error) {
 
 func (fs *WebdavFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Statfs()")
+		tPrintf("$d Statfs()", req.Header.ID)
 		defer func() {
 			if err != nil {
-				tPrintf("Statfs(): %v", err)
+				tPrintf("%d Statfs(): %v",req.Header.ID,  err)
 			} else {
-				tPrintf("Statfs(): %v", resp)
+				tPrintf("%d Statfs(): %v", req.Header.ID, resp)
 			}
 		}()
 	}
@@ -130,12 +130,12 @@ func (fs *WebdavFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *f
 
 func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node, err error) {
 	if trace(T_FUSE) {
-		tPrintf("Mkdir(%s)", req.Name)
+		tPrintf("%d Mkdir(%s)", req.Header.ID, req.Name)
 		defer func() {
 			if err != nil {
-				tPrintf("Mkdir(%s): %v", req.Name, err)
+				tPrintf("%d Mkdir(%s): %v", req.Header.ID, req.Name, err)
 			} else {
-				tPrintf("Mkdir OK")
+				tPrintf("%d Mkdir OK", req.Header.ID)
 			}
 		}()
 	}
@@ -162,12 +162,12 @@ func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node,
 
 func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.Node) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Rename(%s, %s)", req.OldName, req.NewName)
+		tPrintf("%d Rename(%s, %s)", req.Header.ID, req.OldName, req.NewName)
 		defer func() {
 			if err != nil {
-				tPrintf("Rename(%s, %s): %v", req.OldName, req.NewName, err)
+				tPrintf("%d Rename(%s, %s): %v", req.Header.ID, req.OldName, req.NewName, err)
 			} else {
-				tPrintf("Rename OK")
+				tPrintf("%d Rename OK", req.Header.ID)
 			}
 		}()
 	}
@@ -254,12 +254,12 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 
 func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Remove(%s)", req.Name)
+		tPrintf("%d Remove(%s)", req.Header.ID, req.Name)
 		defer func() {
 			if err != nil {
-				tPrintf("Remove(%s): %v", req.Name, err)
+				tPrintf("%d Remove(%s): %v", req.Header.ID, req.Name, err)
 			} else {
-				tPrintf("Remove OK")
+				tPrintf("%d Remove OK", req.Header.ID)
 			}
 		}()
 	}
@@ -305,12 +305,12 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 
 func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Attr(%s)", nd.Name)
+		tPrintf("- Attr(%s)", nd.Name)
 		defer func() {
 			if err != nil {
-				tPrintf("Attr(%s): %v", nd.Name, err)
+				tPrintf("- Attr(%s): %v", nd.Name, err)
 			} else {
-				tPrintf("Attr(%s): %v", nd.Name, tJson(attr))
+				tPrintf("- Attr(%s): %v", nd.Name, tJson(attr))
 			}
 		}()
 	}
@@ -372,12 +372,12 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error) {
 	if trace(T_FUSE) {
-		tPrintf("Lookup(%s)", name)
+		tPrintf("- Lookup(%s)", name)
 		defer func() {
 			if err != nil {
-				tPrintf("Lookup(%s): %v", name, err)
+				tPrintf("- Lookup(%s): %v", name, err)
 			} else {
-				tPrintf("Lookup(%s): OK", name)
+				tPrintf("- Lookup(%s): OK", name)
 			}
 		}()
 	}
@@ -408,12 +408,12 @@ func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error)
 
 func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 	if trace(T_FUSE) {
-		tPrintf("ReaddirAll(%s)", nd.Name)
+		tPrintf("- ReaddirAll(%s)", nd.Name)
 		defer func() {
 			if err != nil {
-				tPrintf("ReadDirAll(%s): %v", nd.Name, err)
+				tPrintf("- ReadDirAll(%s): %v", nd.Name, err)
 			} else {
-				tPrintf("ReadDirAll(%s): %d entries", nd.Name, len(dd))
+				tPrintf("- ReadDirAll(%s): %d entries", nd.Name, len(dd))
 			}
 		}()
 	}
@@ -461,13 +461,13 @@ func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
 	excl  := flagSet(req.Flags, fuse.OpenExclusive)
 	if trace(T_FUSE) {
-		tPrintf("Create(%s): trunc=%v read=%v write=%v excl=%v",
-			req.Name, trunc, read, write, excl)
+		tPrintf("%d Create(%s): trunc=%v read=%v write=%v excl=%v",
+			req.Header.ID, req.Name, trunc, read, write, excl)
 		defer func() {
 			if err != nil {
-				tPrintf("Create(%s): %v", req.Name, err)
+				tPrintf("%d Create(%s): %v", req.Header.ID, req.Name, err)
 			} else {
-				tPrintf("Create(%s): OK", req.Name)
+				tPrintf("%d Create(%s): OK", req.Header.ID, req.Name)
 			}
 		}()
 	}
@@ -538,12 +538,12 @@ func (nd *Node) ftruncate(ctx context.Context, size uint64) (err error) {
 
 func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Setattr(%s, %s)", nd.Name, tJson(req))
+		tPrintf("%d Setattr(%s, %s)", req.Header.ID, nd.Name, tJson(req))
 		defer func() {
 			if err != nil {
-				tPrintf("Setattr(%s): %v", nd.Name, err)
+				tPrintf("%d Setattr(%s): %v", req.Header.ID, nd.Name, err)
 			} else {
-				tPrintf("Setattr(%s): OK", nd.Name)
+				tPrintf("%d Setattr(%s): OK", req.Header.ID, nd.Name)
 			}
 		}()
 	}
@@ -605,10 +605,10 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 
 func (nf *Node) Fsync(ctx context.Context, req *fuse.FsyncRequest) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Fsync(%s)", nf.Name)
+		tPrintf("%d Fsync(%s)", req.Header.ID, nf.Name)
 		defer func() {
 			if err != nil {
-				tPrintf("Fsync(%s): %v", nf.Name, err)
+				tPrintf("%d Fsync(%s): %v", req.Header.ID, nf.Name, err)
 			}
 		}()
 	}
@@ -621,12 +621,12 @@ func (nf *Node) Fsync(ctx context.Context, req *fuse.FsyncRequest) (err error) {
 
 func (nf *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Read(%s, %d, %d)", nf.Name, req.Offset, req.Size)
+		tPrintf("%d Read(%s, %d, %d)", req.Header.ID, nf.Name, req.Offset, req.Size)
 		defer func() {
 			if err != nil {
-				tPrintf("Read(%s): %v", nf.Name, err)
+				tPrintf("%d Read(%s): %v", req.Header.ID, nf.Name, err)
 			} else {
-				tPrintf("Read(%s): %d bytes", nf.Name, len(resp.Data))
+				tPrintf("%d Read(%s): %d bytes", req.Header.ID, nf.Name, len(resp.Data))
 			}
 		}()
 	}
@@ -656,12 +656,12 @@ func (nf *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Read
 
 func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("Write(%s, %d, %d)", nf.Name, req.Offset, len(req.Data))
+		tPrintf("%d Write(%s, %d, %d)", req.Header.ID, nf.Name, req.Offset, len(req.Data))
 		defer func() {
 			if err != nil {
-				tPrintf("Write(%s): %v", nf.Name, err)
+				tPrintf("%d Write(%s): %v", req.Header.ID, nf.Name, err)
 			} else {
-				tPrintf("Write(%s): %d bytes", nf.Name, len(req.Data))
+				tPrintf("%d Write(%s): %d bytes", req.Header.ID, nf.Name, len(req.Data))
 			}
 		}()
 	}
@@ -695,12 +695,12 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 	write := req.Flags.IsReadWrite() || req.Flags.IsWriteOnly()
 
 	if trace(T_FUSE) {
-		tPrintf("Open(%s): trunc=%v read=%v write=%v", nf.Name, trunc, read, write)
+		tPrintf("%d Open(%s): trunc=%v read=%v write=%v", req.Header.ID, nf.Name, trunc, read, write)
 		defer func() {
 			if err != nil {
-				tPrintf("Open(%s): %v", nf.Name, err)
+				tPrintf("%d Open(%s): %v", req.Header.ID, nf.Name, err)
 			} else {
-				tPrintf("Open(%s): OK", nf.Name)
+				tPrintf("%d Open(%s): OK", req.Header.ID, nf.Name)
 			}
 		}()
 	}

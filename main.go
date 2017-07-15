@@ -13,7 +13,9 @@ import (
 )
 
 type Opts struct {
-	Trace		string
+	TraceOpts	string
+	TraceFile	string
+	Daemonize	bool
 	Fake		bool
 	NoMtab		bool
 	Sloppy		bool
@@ -34,7 +36,12 @@ func usage(err error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 	}
-	fmt.Fprintf(os.Stderr, "Usage: %s -sfnv -o opts url mountpoint\n", progname)
+	fmt.Fprintf(os.Stderr, "Usage: %s [-f] [-D] [-T opts] [-F file] [-o opts] url mountpoint\n", progname)
+	fmt.Fprintf(os.Stderr, "       -f:         don't actually mount\n")
+	fmt.Fprintf(os.Stderr, "       -D:         daemonize (default when called as mount.*)\n")
+	fmt.Fprintf(os.Stderr, "       -T opts:    trace options\n")
+	fmt.Fprintf(os.Stderr, "       -F file:    trace file\n")
+	fmt.Fprintf(os.Stderr, "       -o opts:    mount options\n")
 	os.Exit(1)
 }
 
@@ -62,6 +69,12 @@ func rebuildOptions(url, path string) {
 	if bools != "" {
 		args = append(args, "-" + bools)
 	}
+	if opts.TraceOpts != "" {
+		args = append(args, "-T" + opts.TraceOpts)
+	}
+	if opts.TraceFile != "" {
+		args = append(args, "-F" + opts.TraceFile)
+	}
 	stropts := []string{}
 	for _, o := range strings.Split(opts.RawOptions, ",") {
 		if strings.HasPrefix(o, "username=") {
@@ -88,7 +101,21 @@ func parseUInt32(s string, opt string) uint32 {
 
 func main() {
 
-	getopt.Flag(&opts.Trace, 'd', "trace options")
+	// make sure stdin/out/err are open and valid.
+	fd := -1
+	var file *os.File
+	var err error
+	for fd < 3 {
+		file, err = os.OpenFile("/dev/null", os.O_RDWR, 0666)
+                if err != nil {
+			fatal(err.Error())
+		}
+		fd = int(file.Fd())
+	}
+	file.Close()
+
+	getopt.Flag(&opts.TraceFile, 'F', "trace file")
+	getopt.Flag(&opts.TraceOpts, 'T', "trace options")
 	getopt.Flag(&opts.NoMtab, 'n', "do not uodate /etc/mtab (obsolete)")
 	getopt.Flag(&opts.Sloppy, 's', "ignore unknown mount options")
 	getopt.Flag(&opts.Fake, 'f', "do everything but the actual mount")
@@ -113,7 +140,7 @@ func main() {
 		usage(nil)
 	}
 
-	err := getopt.Getopt(nil)
+	err = getopt.Getopt(nil)
 	if err != nil {
 		usage(err)
 	}
@@ -134,16 +161,16 @@ func main() {
 		}
 	}
 
-	err = traceOpts(opts.Trace)
-	if err != nil {
-		fatal(err.Error())
-	}
-
-	if strings.HasPrefix(progname, "mount.") {
+	if strings.HasPrefix(progname, "mount.") || opts.Daemonize {
 		if !IsDaemon() {
 			rebuildOptions(url, mountpoint)
 			Daemonize()
 		}
+	}
+
+	err = traceOpts(opts.TraceOpts, opts.TraceFile)
+	if err != nil {
+		fatal(err.Error())
 	}
 
 	config := WebdavFS{}
@@ -284,6 +311,7 @@ func main() {
 	if IsDaemon() {
 		Detach()
 	}
+	traceredirectStdoutErr()
 
 	err = fs.Serve(c, NewFS(dav, config))
 	if err != nil {

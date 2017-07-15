@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"net/http"
+	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -21,13 +23,41 @@ const (
 
 var traceOptions = uint32(0)
 var timeFmt = "2006-01-02 15:04:05"
+var traceFile *os.File
 
 var traceChan = make(chan string, 8)
-func init () {
+
+func startLogger (file *os.File, fileName string) {
 	go func() {
 		for {
 			line := <-traceChan
-			os.Stdout.Write([]byte(line))
+
+			if file == traceFile {
+				// first check if file was unlinked-
+				// if so, stop logging.
+				var fi, fi2 syscall.Stat_t
+				err := syscall.Fstat(int(file.Fd()), &fi)
+				if fi.Nlink == 0 {
+					traceOptions = 0
+					syscall.Ftruncate(int(file.Fd()), 0)
+					file, _, _ = openDevNull()
+				} else {
+					// or, see if file was renamed.
+					// if so, reopen.
+					err = syscall.Stat(fileName, &fi2)
+					if err != nil || fi.Ino != fi2.Ino {
+						fh, err := unprivOpenFile(fileName,
+							os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+						if err == nil {
+							file = fh
+						}
+					}
+				}
+			}
+
+			if file != nil {
+				file.Write([]byte(line))
+			}
 		}
 	}()
 }
@@ -49,7 +79,7 @@ func tPrintf(format string, args ...interface{}) {
 		}
 		s = strings.Join(l2, "")
 	}
-	dbgChan <- s
+	traceChan <- s
 }
 
 func tJson(obj interface{}) string {
@@ -73,7 +103,39 @@ func tHeaders(hdrs http.Header, prefix string) string {
 	return strings.Join(r, "")
 }
 
-func traceOpts(opt string) (err error)  {
+func unprivOpenFile(name string, flag int, perm os.FileMode) (fh *os.File, err error) {
+	ruid := syscall.Getuid()
+	euid := syscall.Geteuid()
+	if ruid != euid {
+		defer runtime.UnlockOSThread()
+		runtime.LockOSThread()
+		err = syscall.Setreuid(euid, ruid)
+		if err != nil {
+			return
+		}
+	}
+	fh, err = os.OpenFile(name, flag, perm)
+	if ruid != euid {
+		err2 := syscall.Setreuid(ruid, euid)
+		if err2 != nil {
+			if err == nil {
+				fh.Close()
+			}
+			err = err2
+		}
+	}
+	return
+}
+
+func traceredirectStdoutErr() {
+	if traceFile == nil {
+		return
+	}
+	syscall.Dup2(int(traceFile.Fd()), 1)
+	syscall.Dup2(int(traceFile.Fd()), 2)
+}
+
+func traceOpts(opt string, fn string) (err error)  {
 	opts := strings.Split(opt, ",")
 	for _, o := range(opts) {
 		switch o {
@@ -87,7 +149,18 @@ func traceOpts(opt string) (err error)  {
 			traceOptions |= T_FUSE
 		default:
 			err = errors.New("unknown trace option: " + o)
+			return
 		}
+	}
+	if traceOptions == 0 || fn == "" {
+		startLogger(os.Stdout, "stdout")
+		return
+	}
+	traceFile, err = unprivOpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	if err == nil {
+		startLogger(traceFile, fn)
+	} else {
+		startLogger(os.Stdout, "stdout")
 	}
 	return
 }
