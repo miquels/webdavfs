@@ -114,6 +114,7 @@ func main() {
 	}
 	file.Close()
 
+	getopt.Flag(&opts.Daemonize, 'D', "daemonize")
 	getopt.Flag(&opts.TraceFile, 'F', "trace file")
 	getopt.Flag(&opts.TraceOpts, 'T', "trace options")
 	getopt.Flag(&opts.NoMtab, 'n', "do not uodate /etc/mtab (obsolete)")
