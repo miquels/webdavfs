@@ -106,6 +106,16 @@ Using it is simple as:
 # mount -t webdavfs -ousername=you,password=pass https://webdav.where.ever/subdir /mnt
 ```
 
+## Command line options
+
+| Option | Description |
+| --- | --- |
+| -f | don't actually mount |
+| -D | daemonize | default when called as mount.* |
+| -T opts | trace options: fuse,webdav,httpreq,httphdr |
+| -F file | trace file. file will be reopened when renamed, tracing will stop when file is removed |
+| -o opts | mount options |
+
 ## Mount options
 
 | Option | Description |
