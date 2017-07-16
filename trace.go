@@ -19,6 +19,7 @@ const (
 	T_HTTP_REQUEST
 	T_HTTP_HEADERS
 	T_FUSE
+	T_LOCK
 )
 
 var traceOptions = uint32(0)
@@ -150,6 +151,8 @@ func traceOpts(opt string, fn string) (err error)  {
 			traceOptions |= T_HTTP_HEADERS
 		case "fuse":
 			traceOptions |= T_FUSE
+		case "locking":
+			traceOptions |= T_LOCK
 		default:
 			err = errors.New("unknown trace option: " + o)
 			return

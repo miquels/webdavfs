@@ -199,7 +199,8 @@ func (de *Node) doesMeta() bool {
 	return false
 }
 
-func (de *Node) incIoRef() (err error) {
+func (de *Node) incIoRef(id fuse.RequestID) (err error) {
+	count := 0
 	for {
 		de.Lock()
 		if !de.doesMeta() {
@@ -209,6 +210,13 @@ func (de *Node) incIoRef() (err error) {
 		}
 		de.Unlock()
 		time.Sleep(10 * time.Millisecond)
+		if trace(T_LOCK) {
+			count++
+			if count > 200 {
+				tPrintf("%d incIoRef(%s) locked for 2 secs", id, de.Name)
+				count = 0
+			}
+		}
 	}
 	return
 }
@@ -220,8 +228,9 @@ func (de *Node) decIoRef() {
 }
 
 // Waits for i/o to cease, then increases metaref.
-func (de *Node) incMetaRef() error {
+func (de *Node) incMetaRef(id fuse.RequestID) error {
 	// first wait for other meta operations
+	count := 0
 	for {
 		if !de.doesMeta() {
 			de.RefCount[RefMeta]++
@@ -229,24 +238,39 @@ func (de *Node) incMetaRef() error {
 		}
 		de.Unlock()
 		time.Sleep(10 * time.Millisecond)
+		if trace(T_LOCK) {
+			count++
+			if count > 200 {
+				tPrintf("%d incMetaRef(%s) metawait locked for 2 secs", id, de.Name)
+				count = 0
+			}
+		}
 		de.Lock()
 	}
 	// now wait for i/o operations to cease.
+	count = 0
 	for {
 		if !de.doesIO() {
 			break
 		}
 		de.Unlock()
 		time.Sleep(10 * time.Millisecond)
+		if trace(T_LOCK) {
+			count++
+			if count > 200 {
+				tPrintf("%d incMetaRef(%s) iowait locked for 2 secs", id, de.Name)
+				count = 0
+			}
+		}
 		de.Lock()
 	}
 	// dbgPrintf("node: incMetaRef %s@%p: ref now %d\n", de.Name, de, de.RefCount[RefMeta])
 	return nil
 }
 
-func (de *Node) incMetaRefThenLock() (err error) {
+func (de *Node) incMetaRefThenLock(id fuse.RequestID) (err error) {
 	de.Lock()
-	err = de.incMetaRef()
+	err = de.incMetaRef(id)
 	return
 }
 

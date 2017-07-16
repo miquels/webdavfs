@@ -139,7 +139,7 @@ func (nd *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (ret fs.Node,
 			}
 		}()
 	}
-	nd.incMetaRefThenLock()
+	nd.incMetaRefThenLock(req.Header.ID)
 	path := joinPath(nd.getPath(), req.Name)
 	nd.Unlock()
 	err = dav.Mkcol(addSlash(path))
@@ -212,9 +212,9 @@ func (nd *Node) Rename(ctx context.Context, req *fuse.RenameRequest, destDir fs.
 		first = false
 
 		lock1, lock2 = newLock1, newLock2
-		lock1.incMetaRef()
+		lock1.incMetaRef(req.Header.ID)
 		if lock2 != nil {
-			lock2.incMetaRef()
+			lock2.incMetaRef(req.Header.ID)
 		}
 	}
 
@@ -263,7 +263,7 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 			}
 		}()
 	}
-	nd.incMetaRefThenLock()
+	nd.incMetaRefThenLock(req.Header.ID)
 	path := joinPath(nd.getPath(), req.Name)
 	nd.Unlock()
 	props, err := dav.PropFindWithRedirect(path, 1, nil)
@@ -329,7 +329,7 @@ func (nd *Node) Getattr(ctx context.Context, req *fuse.GetattrRequest, resp *fus
 		return
 	}
 
-	nd.incIoRef()
+	nd.incIoRef(req.Header.ID)
 
 	dnode := nd.Dnode
 	if !nd.statInfoFresh() {
@@ -390,7 +390,7 @@ func (nd *Node) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 			}
 		}()
 	}
-	nd.incIoRef()
+	nd.incIoRef(req.Header.ID)
 	defer nd.decIoRef()
 
 	// do we have a recent entry available?
@@ -426,7 +426,7 @@ func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 			}
 		}()
 	}
-	nd.incIoRef()
+	nd.incIoRef(0)
 	path := nd.getPath()
 	dirs, err := dav.Readdir(path, true)
 	if err == nil {
@@ -462,7 +462,7 @@ func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 }
 
 func (nd *Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (node fs.Node, handle fs.Handle, err error) {
-	nd.incMetaRefThenLock()
+	nd.incMetaRefThenLock(req.Header.ID)
 	path := nd.getPath()
 	nd.Unlock()
 	trunc := flagSet(req.Flags, fuse.OpenTruncate)
@@ -523,8 +523,8 @@ func (nd *Node) Forget() {
 	nd.Unlock()
 }
 
-func (nd *Node) ftruncate(ctx context.Context, size uint64) (err error) {
-	nd.incMetaRefThenLock()
+func (nd *Node) ftruncate(ctx context.Context, size uint64, id fuse.RequestID) (err error) {
+	nd.incMetaRefThenLock(id)
 	path := nd.getPath()
 	nd.Unlock()
 	if size == 0 {
@@ -569,7 +569,7 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 
 	if attrSet(v, fuse.SetattrSize) {
-		err = nd.ftruncate(ctx, req.Size)
+		err = nd.ftruncate(ctx, req.Size, req.Header.ID)
 		if err != nil {
 			return
 		}
@@ -643,7 +643,7 @@ func (nf *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Read
 		err = fuse.Errno(syscall.ESTALE)
 		return
 	}
-	nf.incIoRef()
+	nf.incIoRef(req.Header.ID)
 	defer nf.decIoRef()
 	nf.Lock()
 	toRead := int64(nf.Size) - req.Offset
@@ -682,7 +682,7 @@ func (nf *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wr
 		resp.Size = 0
 		return
 	}
-	nf.incIoRef()
+	nf.incIoRef(req.Header.ID)
 	path := nf.getPath()
 	_, err = dav.PutRange(path, req.Data, req.Offset, false, false)
 	if err == nil {
@@ -718,7 +718,7 @@ func (nf *Node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 		return
 	}
 
-	nf.incIoRef()
+	nf.incIoRef(req.Header.ID)
 	path := nf.getPath()
 
 	// See if kernel cache is still valid.
