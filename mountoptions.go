@@ -13,6 +13,7 @@ type MountOptions struct {
 	DefaultPermissions	bool
 	NoDefaultPermissions	bool
 	ReadOnly		bool
+	ReadWrite		bool
 	Uid			uint32
 	Gid			uint32
 	Mode			uint32
@@ -51,6 +52,8 @@ func parseMountOptions(n string, sloppy bool) (mo MountOptions, err error) {
 			mo.NoDefaultPermissions = true
 		case "ro":
 			mo.ReadOnly = true
+		case "rw":
+			mo.ReadWrite = true
 		case "uid":
 			err = parseUInt32(v, 10, "uid", &mo.Uid)
 		case "gid":
