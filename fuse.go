@@ -85,7 +85,7 @@ func (fs *WebdavFS) Root() (fs.Node, error) {
 
 func (fs *WebdavFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) (err error) {
 	if trace(T_FUSE) {
-		tPrintf("$d Statfs()", req.Header.ID)
+		tPrintf("%d Statfs()", req.Header.ID)
 		defer func() {
 			if err != nil {
 				tPrintf("%d Statfs(): %v",req.Header.ID,  err)
@@ -304,13 +304,23 @@ func (nd *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) (err error)
 }
 
 func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
+	// should not be called if Getattr exists.
+	r := &fuse.GetattrRequest{}
+	s := &fuse.GetattrResponse{}
+	err = nd.Getattr(ctx, r, s)
+	*attr = s.Attr
+	return
+}
+
+func (nd *Node) Getattr(ctx context.Context, req *fuse.GetattrRequest, resp *fuse.GetattrResponse) (err error) {
+
 	if trace(T_FUSE) {
-		tPrintf("- Attr(%s)", nd.Name)
+		tPrintf("%d Getattr(%s)", req.Header.ID, nd.Name)
 		defer func() {
 			if err != nil {
-				tPrintf("- Attr(%s): %v", nd.Name, err)
+				tPrintf("%d Getattr(%s): %v", req.Header.ID, nd.Name, err)
 			} else {
-				tPrintf("- Attr(%s): %v", nd.Name, tJson(attr))
+				tPrintf("%d Getattr(%s): %v", req.Header.ID, nd.Name, tJson(resp))
 			}
 		}()
 	}
@@ -331,7 +341,6 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		if err == nil {
 			nd.statInfoTouch()
 		}
-	} else {
 	}
 
 	if err == nil {
@@ -350,7 +359,7 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 			if nd.Atime.Before(nd.Mtime) {
 				nd.Atime = nd.Mtime
 			}
-			*attr = fuse.Attr{
+			resp.Attr = fuse.Attr{
 				Valid: attrValidTime,
 				Size: nd.Size,
 				Blocks: (nd.Size + 511) / 512,
@@ -370,14 +379,14 @@ func (nd *Node) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 	return
 }
 
-func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error) {
+func (nd *Node) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (rn fs.Node, err error) {
 	if trace(T_FUSE) {
-		tPrintf("- Lookup(%s)", name)
+		tPrintf("%d Lookup(%s)", req.Header.ID, req.Name)
 		defer func() {
 			if err != nil {
-				tPrintf("- Lookup(%s): %v", name, err)
+				tPrintf("%d Lookup(%s): %v", req.Header.ID, req.Name, err)
 			} else {
-				tPrintf("- Lookup(%s): OK", name)
+				tPrintf("%d Lookup(%s): OK", req.Header.ID, req.Name)
 			}
 		}()
 	}
@@ -386,7 +395,7 @@ func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error)
 
 	// do we have a recent entry available?
 	nd.Lock()
-	nn := nd.getNode(name)
+	nn := nd.getNode(req.Name)
 	valid := nn != nil && nn.statInfoFresh()
 	nd.Unlock()
 	if valid {
@@ -395,7 +404,7 @@ func (nd *Node) Lookup(ctx context.Context, name string) (rn fs.Node, err error)
 	}
 
 	// need to call stat
-	path := joinPath(nd.getPath(), name)
+	path := joinPath(nd.getPath(), req.Name)
 	dnode, err := dav.Stat(path)
 
 	if err == nil {
