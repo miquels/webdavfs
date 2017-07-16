@@ -136,6 +136,9 @@ func traceredirectStdoutErr() {
 }
 
 func traceOpts(opt string, fn string) (err error)  {
+	if opt == "" {
+		return
+	}
 	opts := strings.Split(opt, ",")
 	for _, o := range(opts) {
 		switch o {

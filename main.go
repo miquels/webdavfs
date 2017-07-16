@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -13,6 +12,7 @@ import (
 )
 
 type Opts struct {
+	Type		string
 	TraceOpts	string
 	TraceFile	string
 	Daemonize	bool
@@ -21,13 +21,9 @@ type Opts struct {
 	Sloppy		bool
 	Verbose		bool
 	RawOptions	string
-	StrOption	map[string]string
-	BoolOption	map[string]bool
 }
-var opts = Opts{
-	StrOption:	map[string]string{},
-	BoolOption:	map[string]bool{},
-}
+var opts = Opts{}
+var mountOpts MountOptions
 var progname = path.Base(os.Args[0])
 
 var DefaultPath = "/usr/local/bin:/usr/local/sbin:/bin:/sbin:/usr/bin:/usr/sbin"
@@ -36,7 +32,8 @@ func usage(err error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 	}
-	fmt.Fprintf(os.Stderr, "Usage: %s [-f] [-D] [-T opts] [-F file] [-o opts] url mountpoint\n", progname)
+	fmt.Fprintf(os.Stderr, "Usage: %s [-sf] [-D] [-T opts] [-F file] [-o opts] url mountpoint\n", progname)
+	fmt.Fprintf(os.Stderr, "       -s:         ignore unknown mount options\n")
 	fmt.Fprintf(os.Stderr, "       -f:         don't actually mount\n")
 	fmt.Fprintf(os.Stderr, "       -D:         daemonize (default when called as mount.*)\n")
 	fmt.Fprintf(os.Stderr, "       -T opts:    trace options\n")
@@ -69,6 +66,9 @@ func rebuildOptions(url, path string) {
 	if bools != "" {
 		args = append(args, "-" + bools)
 	}
+	if opts.Type != "" {
+		args = append(args, "-t" + opts.Type)
+	}
 	if opts.TraceOpts != "" {
 		args = append(args, "-T" + opts.TraceOpts)
 	}
@@ -94,14 +94,6 @@ func rebuildOptions(url, path string) {
 	os.Args = args
 }
 
-func parseUInt32(s string, opt string) uint32 {
-	n, err := strconv.ParseUint(s , 10, 32)
-	if err != nil {
-		fatal(opt + " option: " + err.Error())
-	}
-	return uint32(n)
-}
-
 func main() {
 
 	// make sure stdin/out/err are open and valid.
@@ -117,6 +109,7 @@ func main() {
 	}
 	file.Close()
 
+	getopt.Flag(&opts.Type, 't', "type.subtype")
 	getopt.Flag(&opts.Daemonize, 'D', "daemonize")
 	getopt.Flag(&opts.TraceFile, 'F', "trace file")
 	getopt.Flag(&opts.TraceOpts, 'T', "trace options")
@@ -153,16 +146,16 @@ func main() {
 	url := getopt.Arg(0)
 	mountpoint := getopt.Arg(1)
 
-	// parse -o option1,option2,option3=foo ..
-	for _, o := range strings.Split(opts.RawOptions, ",") {
-		kv := strings.SplitN(o, "=", 2)
-		if len(kv) > 1 {
-			opts.BoolOption[kv[0]] = true
-			opts.StrOption[kv[0]] = kv[1]
-		} else {
-			opts.StrOption[kv[0]] = "true"
-			opts.BoolOption[kv[0]] = true
-		}
+	// parse mount options, then add defaults.
+	mountOpts, err := parseMountOptions(opts.RawOptions, opts.Sloppy)
+	if err != nil {
+		fatal(err.Error())
+	}
+	if mountOpts.MaxConns == 0 {
+		mountOpts.MaxConns = 8
+	}
+	if mountOpts.MaxIdleConns == 0 {
+		mountOpts.MaxIdleConns = 8
 	}
 
 	if strings.HasPrefix(progname, "mount.") || opts.Daemonize {
@@ -182,34 +175,31 @@ func main() {
 		config.Uid = uint32(os.Getuid())
 		config.Gid = uint32(os.Getgid())
 	}
+	config.Mode = mountOpts.Mode
 
-	maxconns := 8
-	maxidleconns := 8
-	if opts.StrOption["maxconns"] != "" {
-		maxconns = int(parseUInt32(opts.StrOption["maxconns"], "maxconns"))
-	}
-	if opts.StrOption["maxidleconns"] != "" {
-		maxidleconns = int(parseUInt32(opts.StrOption["maxidleconns"], "maxidleconns"))
+	// if running from fstab with "uid=123,gid=456" set some reasonable
+	// defaults so that that uid can actually access the files.
+	if os.Getuid() == 0 && mountOpts.Uid != 0 && mountOpts.Mode == 0 {
+		mountOpts.AllowOther = true
+		config.Mode = 0700
 	}
 
-	if opts.StrOption["uid"] != "" {
-		uid := parseUInt32(opts.StrOption["uid"], "uid")
-		if os.Getuid() != 0 && os.Getuid() != int(uid) {
+	if mountOpts.Uid > 0 {
+		if os.Getuid() != 0 && os.Getuid() != int(mountOpts.Uid) {
 			fatal("uid option: permission denied")
 		}
-		config.Uid = uid
+		config.Uid = mountOpts.Uid
 	}
-	if opts.StrOption["gid"] != "" {
-		gid := parseUInt32(opts.StrOption["gid"], "gid")
+	if mountOpts.Gid > 0 {
 		if os.Getuid() != 0 {
 			ok := false
-			if os.Getgid() == int(gid) {
+			if os.Getgid() == int(mountOpts.Gid) {
 				ok = true
 			}
 			groups, err := os.Getgroups()
 			if err == nil {
 				for _, gr := range groups {
-					if gr == int(gid) {
+					if gr == int(mountOpts.Gid) {
 						ok = true
 					}
 				}
@@ -218,24 +208,15 @@ func main() {
 				fatal("gid option: permission denied")
 			}
 		}
-		config.Gid = gid
+		config.Gid = mountOpts.Gid
 	}
 
-	if opts.StrOption["mode"] != "" {
-		mode, err := strconv.ParseUint(opts.StrOption["mode"] , 8, 32)
-		if err != nil {
-			fatal("mode option: " + err.Error())
-		}
-		config.Mode = uint32(mode)
-	}
-
-	if opts.BoolOption["allow_other"] {
-		if !opts.BoolOption["no_default_permissions"] {
+	if mountOpts.AllowOther {
+		if !mountOpts.NoDefaultPermissions {
 			if config.Mode == 0 {
 				config.Mode = 0755
 			}
-			opts.StrOption["default_permissions"] = "true"
-			opts.BoolOption["default_permissions"] = true
+			mountOpts.DefaultPermissions = true
 		} else {
 			if config.Mode == 0 {
 				config.Mode = 0777
@@ -245,11 +226,11 @@ func main() {
 
 	username := os.Getenv("WEBDAV_USERNAME")
 	password := os.Getenv("WEBDAV_PASSWORD")
-	if opts.StrOption["username"] != "" {
-		username = opts.StrOption["username"]
+	if mountOpts.Username != "" {
+		username = mountOpts.Username
 	}
-	if opts.StrOption["password"] != "" {
-		password = opts.StrOption["password"]
+	if mountOpts.Password != "" {
+		password = mountOpts.Password
 	}
 	os.Unsetenv("WEBDAV_USERNAME")
 	os.Unsetenv("WEBDAV_PASSWORD")
@@ -261,8 +242,8 @@ func main() {
 
 	dav := &DavClient{
 		Url: url,
-		MaxConns: maxconns,
-		MaxIdleConns: maxidleconns,
+		MaxConns: int(mountOpts.MaxConns),
+		MaxIdleConns: int(mountOpts.MaxIdleConns),
 		Username: username,
 		Password: password,
 	}
@@ -270,7 +251,7 @@ func main() {
 	if err != nil {
 		fatal(err.Error())
 	}
-	if !dav.CanPutRange() && !opts.BoolOption["ro"] {
+	if !dav.CanPutRange() && !mountOpts.ReadOnly {
 		fmt.Fprintf(os.Stderr, "%s: no PUT Range support, writing disabled\n", url)
 	}
 	if opts.Fake {
@@ -284,22 +265,22 @@ func main() {
 		fuse.MaxReadahead(1024 * 1024),
 	}
 
-	if opts.BoolOption["allow_root"] {
+	if mountOpts.AllowRoot {
 		fmo = append(fmo, fuse.AllowRoot())
 	}
-	if opts.BoolOption["allow_other"] {
+	if mountOpts.AllowOther {
 		fmo = append(fmo, fuse.AllowOther())
 	}
-	if opts.BoolOption["async_read"] {
+	if mountOpts.AsyncRead {
 		fmo = append(fmo, fuse.AsyncRead())
 	}
-	if opts.BoolOption["default_permissions"] {
+	if mountOpts.DefaultPermissions {
 		fmo = append(fmo, fuse.DefaultPermissions())
 	}
-	if opts.BoolOption["nonempty"] {
+	if mountOpts.NonEmpty {
 		fmo = append(fmo, fuse.AllowNonEmptyMount())
 	}
-	if opts.BoolOption["ro"] {
+	if mountOpts.ReadOnly {
 		fmo = append(fmo, fuse.ReadOnly())
 	}
 
