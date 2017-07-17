@@ -2,7 +2,9 @@
 package main
 
 import (
+	"os"
 	"runtime/debug"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"syscall"
@@ -48,6 +50,8 @@ func (nd *Node) Lock() {
 		lockTimer = time.AfterFunc(2 * time.Second, func() {
 			tPrintf("LOCKERR (%s) Lock held longer than 2 seconds:\n%s",
 				name, stack)
+			tPrintf("== dump of all goroutines:")
+			pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 		})
 	}
 	lockRef++
