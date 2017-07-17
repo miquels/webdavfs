@@ -579,8 +579,9 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	// fake setting mtime if it is roughly unchanged.
 	if attrSet(v, fuse.SetattrMtime) {
 		if nd.LastStat.Add(time.Second).Before(time.Now()) ||
-		   req.Atime.Before(nd.Mtime.Add(-500 * time.Millisecond)) ||
-		   req.Atime.After(nd.Mtime.Add(500 * time.Millisecond)) {
+		   req.Mtime.Before(nd.Mtime.Add(-500 * time.Millisecond)) ||
+		   req.Mtime.After(nd.Mtime.Add(500 * time.Millisecond)) {
+			nd.Unlock()
 			return fuse.EPERM
 		}
 	}
