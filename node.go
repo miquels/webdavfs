@@ -158,7 +158,7 @@ func (nd *Node) deleteUnusedChildren() {
 func (nd *Node) invalidateThisNode() {
 	nd.deleteUnusedChildren()
 	if !nd.InUse && len(nd.Child) == 0 {
-		nd.Forget()
+		nd.forgetNode()
 	}
 }
 
