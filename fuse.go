@@ -361,6 +361,7 @@ func (nd *Node) Getattr(ctx context.Context, req *fuse.GetattrRequest, resp *fus
 			}
 			resp.Attr = fuse.Attr{
 				Valid: attrValidTime,
+				Inode: nd.Inode,
 				Size: nd.Size,
 				Blocks: (nd.Size + 511) / 512,
 				Atime: nd.Atime,
@@ -427,36 +428,41 @@ func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 		}()
 	}
 	nd.incIoRef(0)
+	defer nd.decIoRef()
+
 	path := nd.getPath()
 	dirs, err := dav.Readdir(path, true)
-	if err == nil {
-		nd.Lock()
-		seen := map[string]bool{}
-		for _, d := range dirs {
-			nd.addNode(d, false)
-			seen[d.Name] = true
-		}
-		for _, x := range nd.Child {
-			if !seen[x.Name] {
-				x.invalidateThisNode()
-			}
-		}
-		nd.Unlock()
-	}
-	nd.decIoRef()
 	if err != nil {
 		return
 	}
+
+	nd.Lock()
+	defer nd.Unlock()
+
+	seen := map[string]bool{}
 	for _, d := range dirs {
+		ino := nd.Inode
+		if d.Name != "" && d.Name != "." {
+			nn := nd.addNode(d, false)
+			ino = nn.Inode
+		}
+
 		tp := fuse.DT_File
 		if (d.IsDir) {
 			tp =fuse.DT_Dir
 		}
 		dd = append(dd, fuse.Dirent{
 			Name: d.Name,
-			Inode: 0,
+			Inode: ino,
 			Type: tp,
 		})
+
+		seen[d.Name] = true
+	}
+	for _, x := range nd.Child {
+		if !seen[x.Name] {
+			x.invalidateThisNode()
+		}
 	}
 	return
 }
@@ -596,6 +602,7 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 	attr := fuse.Attr{
 		Valid: attrValidTime,
+		Inode: nd.Inode,
 		Size:	nd.Size,
 		Blocks:	nd.Size / 512,
 		Atime: nd.Atime,

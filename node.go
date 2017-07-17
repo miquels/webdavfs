@@ -2,11 +2,13 @@
 package main
 
 import (
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 	"bazil.org/fuse"
+	"bazil.org/fuse/fs"
 )
 
 const (
@@ -33,18 +35,39 @@ var rootNode = &Node{
 	Child:		make(map[string]*Node),
 }
 
-var inodeCounter = uint64(1)
+var EBUSY = fuse.Errno(syscall.EBUSY)
 var nodeMutex sync.Mutex
 var lockRef = 0
-var EBUSY = fuse.Errno(syscall.EBUSY)
+var lockTimer *time.Timer
 
 func (nd *Node) Lock() {
 	nodeMutex.Lock()
+	if trace(T_LOCK) {
+		name := nd.Name
+		stack := debug.Stack()
+		lockTimer = time.AfterFunc(2 * time.Second, func() {
+			tPrintf("LOCKERR (%s) Lock held longer than 2 seconds:\n%s",
+				name, stack)
+		})
+	}
 	lockRef++
 	// dbgPrintf("node: Lock %s @ %p ref %d\n", nd.Name, nd, lockRef)
 }
 
 func (nd *Node) Unlock() {
+	if trace(T_LOCK) {
+		if lockRef != 1 {
+			tPrintf("LOCKERR unlock: lockRef %d != 1\n%s",
+				lockRef, debug.Stack())
+		}
+		if lockTimer == nil {
+			tPrintf("LOCKERR unlock: lockTimer == nil\n%s",
+				debug.Stack())
+		} else {
+			lockTimer.Stop()
+			lockTimer = nil
+		}
+	}
 	lockRef--
 	// dbgPrintf("node: Unlock %s @ %p ref %d\n", nd.Name, nd, lockRef)
 	nodeMutex.Unlock()
@@ -61,7 +84,7 @@ func (nd *Node) addNode(d Dnode, really bool) *Node {
 		return n
 	}
 	nn := &Node {
-		Inode: inodeCounter,
+		Inode: fs.GenerateDynamicInode(nd.Inode, d.Name),
 		Dnode: d,
 		Parent: nd,
 		InUse: really,
@@ -212,8 +235,8 @@ func (de *Node) incIoRef(id fuse.RequestID) (err error) {
 		time.Sleep(10 * time.Millisecond)
 		if trace(T_LOCK) {
 			count++
-			if count > 200 {
-				tPrintf("%d incIoRef(%s) locked for 2 secs", id, de.Name)
+			if count > 300 {
+				tPrintf("%d LOCKERR incIoRef(%s) locked for 3 secs", id, de.Name)
 				count = 0
 			}
 		}
@@ -241,7 +264,7 @@ func (de *Node) incMetaRef(id fuse.RequestID) error {
 		if trace(T_LOCK) {
 			count++
 			if count > 200 {
-				tPrintf("%d incMetaRef(%s) metawait locked for 2 secs", id, de.Name)
+				tPrintf("%d LOCKERR incMetaRef(%s) metawait locked for 2 secs", id, de.Name)
 				count = 0
 			}
 		}
@@ -258,7 +281,7 @@ func (de *Node) incMetaRef(id fuse.RequestID) error {
 		if trace(T_LOCK) {
 			count++
 			if count > 200 {
-				tPrintf("%d incMetaRef(%s) iowait locked for 2 secs", id, de.Name)
+				tPrintf("%d LOCKERR incMetaRef(%s) iowait locked for 2 secs", id, de.Name)
 				count = 0
 			}
 		}
