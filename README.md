@@ -153,7 +153,6 @@ configuration file.
 
 - maxconns doesn't work yet. this is complicated with the Go HTTP client.
 - add configuration file
-- add more configurable (and nice) debug logging
 - timeout handling and interrupt handling
 - we use busy-loop locking, yuck. use semaphores built on channels.
 - rewrite fuse.go code to use the bazil/fuse abstraction instead of bazil/fuse/fs.  
