@@ -41,6 +41,18 @@ func flagSet(v fuse.OpenFlags, f fuse.OpenFlags) bool {
 	return (v & f) > 0
 }
 
+func getCMtime(c time.Time, m time.Time) (rc time.Time, rm time.Time) {
+	rc = c
+	rm = m
+	if m.IsZero() {
+		rm = time.Now()
+	}
+	if c.IsZero() {
+		rc = rm
+	}
+	return
+}
+
 func NewFS(d *DavClient, config WebdavFS) *WebdavFS {
 
 	if trace(T_FUSE) {
@@ -353,21 +365,23 @@ func (nd *Node) Getattr(ctx context.Context, req *fuse.GetattrRequest, resp *fus
 			// All well, build fuse.Attr.
 			nd.Dnode = dnode
 			mode := FS.fileMode
+			ctime, mtime := getCMtime(nd.Ctime, nd.Mtime)
+			atime := nd.Atime
+			if atime.IsZero() {
+				atime = mtime
+			}
 			if nd.IsDir {
 				mode = FS.dirMode
-			}
-			if nd.Atime.Before(nd.Mtime) {
-				nd.Atime = nd.Mtime
 			}
 			resp.Attr = fuse.Attr{
 				Valid: attrValidTime,
 				Inode: nd.Inode,
 				Size: nd.Size,
 				Blocks: (nd.Size + 511) / 512,
-				Atime: nd.Atime,
-				Mtime: nd.Mtime,
-				Ctime: nd.Ctime,
-				Crtime: nd.Ctime,
+				Atime: atime,
+				Mtime: mtime,
+				Ctime: ctime,
+				Crtime: ctime,
 				Mode: mode,
 				Nlink: 1,
 				Uid: FS.Uid,
@@ -568,9 +582,13 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 	invalid := fuse.SetattrMode | fuse. SetattrUid | fuse.SetattrGid |
 		fuse.SetattrBkuptime | fuse.SetattrCrtime | fuse.SetattrChgtime |
-		fuse.SetattrFlags | fuse.SetattrHandle | fuse.SetattrLockOwner
+		fuse.SetattrFlags | fuse.SetattrHandle
 	v := req.Valid
 	if attrSet(v, invalid) {
+		if trace(T_FUSE) {
+			tPrintf("%d Setattr($s): invalid attributes (mode %d, invalid %d)",
+				req.Header.ID, nd.Name, v, invalid)
+		}
 		return fuse.EPERM
 	}
 
@@ -582,12 +600,13 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 
 	nd.Lock()
+	defer nd.Unlock()
+
 	// fake setting mtime if it is roughly unchanged.
 	if attrSet(v, fuse.SetattrMtime) {
 		if nd.LastStat.Add(time.Second).Before(time.Now()) ||
 		   req.Mtime.Before(nd.Mtime.Add(-500 * time.Millisecond)) ||
 		   req.Mtime.After(nd.Mtime.Add(500 * time.Millisecond)) {
-			nd.Unlock()
 			return fuse.EPERM
 		}
 	}
@@ -596,19 +615,29 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		nd.Atime = req.Atime
 	}
 
+	if attrSet(v, fuse.SetattrLockOwner) {
+		// we ignore this for now, it's for mandatory locking
+		// http://www.mail-archive.com/git-commits-head@vger.kernel.org/msg27852.html
+	}
+
 	mode := FS.fileMode
 	if nd.IsDir {
 		mode = FS.dirMode
+	}
+	ctime, mtime := getCMtime(nd.Ctime, nd.Mtime)
+	atime := nd.Atime
+	if atime.IsZero() {
+		atime = mtime
 	}
 	attr := fuse.Attr{
 		Valid: attrValidTime,
 		Inode: nd.Inode,
 		Size:	nd.Size,
 		Blocks:	nd.Size / 512,
-		Atime: nd.Atime,
-		Mtime: nd.Mtime,
-		Ctime: nd.Ctime,
-		Crtime: nd.Ctime,
+		Atime: atime,
+		Mtime: mtime,
+		Ctime: ctime,
+		Crtime: ctime,
 		Mode: mode,
 		Nlink: 1,
 		Uid: FS.Uid,
@@ -616,7 +645,6 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 		BlockSize: 4096,
 	}
 	resp.Attr = attr
-	nd.Unlock()
 	return
 }
 

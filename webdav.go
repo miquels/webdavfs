@@ -379,7 +379,7 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Pro
 	defer d.semRelease()
 
 	if trace(T_WEBDAV) {
-		tPrintf("Propfind(%s, %d, %v", path, depth, props)
+		tPrintf("Propfind(%s, %d, %v)", path, depth, props)
 		defer func() {
 			if err != nil {
 				tPrintf("Propfind: %v", err)
