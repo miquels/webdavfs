@@ -773,10 +773,6 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, create
 
 	req, err := d.buildRequest("PATCH", path, data)
 
-	end := offset + int64(len(data)) - 1
-	if end < offset {
-		end = offset
-	}
 	if create {
 		if excl {
 			req.Header.Set("If-None-Match", "*")
@@ -785,13 +781,14 @@ func (d *DavClient) sabrePutRange(path string, data []byte, offset int64, create
 		req.Header.Set("If-Match", "*")
 	}
 	req.Header.Set("Content-Type", "application/x-sabredav-partialupdate")
-	req.Header.Set("X-Update-Range", fmt.Sprintf("bytes=%d-%d", offset, end))
+	req.Header.Set("X-Update-Range", fmt.Sprintf("bytes=%d-", offset))
 
 	resp, err := d.do(req)
 	defer drainBody(resp)
 	if err != nil {
 		return
 	}
+	created = resp.StatusCode == 201
 	return
 }
 
