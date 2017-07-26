@@ -130,6 +130,7 @@ Using it is simple as:
 | gid			| Group ID for filesystem. |
 | mode			| Mode for files/directories on the filesystem (600, 666, etc). |
 |			| Files will never have the executable bit on, directories always. |
+| cookie		| Authorization Cookie (Useful for O365 Sharepoint/OneDrive for Business) |
 | password		| Password of webdav user |
 | username		| Username of webdav user |
 | async_read		| As per fuse documentation |

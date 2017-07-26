@@ -84,6 +84,8 @@ func rebuildOptions(url, path string) {
 			os.Setenv("WEBDAV_USERNAME", o[9:])
 		} else if strings.HasPrefix(o, "password=") {
 			os.Setenv("WEBDAV_PASSWORD", o[9:])
+		} else if strings.HasPrefix(o, "cookie=") {
+			os.Setenv("WEBDAV_COOKIE", o[7:])
 		} else {
 			stropts = append(stropts, o)
 		}
@@ -226,14 +228,19 @@ func main() {
 
 	username := os.Getenv("WEBDAV_USERNAME")
 	password := os.Getenv("WEBDAV_PASSWORD")
+	cookie   := os.Getenv("WEBDAV_COOKIE")
 	if mountOpts.Username != "" {
 		username = mountOpts.Username
 	}
 	if mountOpts.Password != "" {
 		password = mountOpts.Password
 	}
+	if mountOpts.Cookie != "" {
+		cookie = mountOpts.Cookie
+	}
 	os.Unsetenv("WEBDAV_USERNAME")
 	os.Unsetenv("WEBDAV_PASSWORD")
+	os.Unsetenv("WEBDAV_COOKIE")
 
 	// for some reason we can end up without a $PATH ..
 	if os.Getenv("PATH") == "" {
@@ -246,6 +253,7 @@ func main() {
 		MaxIdleConns: int(mountOpts.MaxIdleConns),
 		Username: username,
 		Password: password,
+		Cookie: cookie,
 	}
 	err = dav.Mount()
 	if err != nil {

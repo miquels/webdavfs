@@ -17,6 +17,7 @@ type MountOptions struct {
 	Uid			uint32
 	Gid			uint32
 	Mode			uint32
+	Cookie			string
 	Password		string
 	Username		string
 	AsyncRead		bool
@@ -60,6 +61,8 @@ func parseMountOptions(n string, sloppy bool) (mo MountOptions, err error) {
 			err = parseUInt32(v, 10, "gid", &mo.Gid)
 		case "mode":
 			err = parseUInt32(v, 8, "mode", &mo.Mode)
+		case "cookie":
+			mo.Cookie = v
 		case "password":
 			mo.Password = v
 		case "username":
