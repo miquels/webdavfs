@@ -35,6 +35,9 @@ func parseUInt32(v string, base int, name string, loc *uint32) (err error) {
 }
 
 func parseMountOptions(n string, sloppy bool) (mo MountOptions, err error) {
+	if n == "" {
+		return
+	}
 
 	for _, kv := range strings.Split(n, ",") {
 		a := strings.SplitN(kv, "=", 2)
