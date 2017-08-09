@@ -373,6 +373,9 @@ func (nd *Node) Getattr(ctx context.Context, req *fuse.GetattrRequest, resp *fus
 			if nd.IsDir {
 				mode = FS.dirMode
 			}
+			if nd.IsLink {
+				mode = os.ModeSymlink | 0777
+			}
 			resp.Attr = fuse.Attr{
 				Valid: attrValidTime,
 				Inode: nd.Inode,
@@ -464,6 +467,9 @@ func (nd *Node) ReadDirAll(ctx context.Context) (dd []fuse.Dirent, err error) {
 		tp := fuse.DT_File
 		if (d.IsDir) {
 			tp =fuse.DT_Dir
+		}
+		if (d.IsLink) {
+			tp =fuse.DT_Link
 		}
 		dd = append(dd, fuse.Dirent{
 			Name: d.Name,
@@ -624,6 +630,9 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	if nd.IsDir {
 		mode = FS.dirMode
 	}
+	if nd.IsLink {
+		mode = os.ModeSymlink | 0777
+	}
 	ctime, mtime := getCMtime(nd.Ctime, nd.Mtime)
 	atime := nd.Atime
 	if atime.IsZero() {
@@ -646,6 +655,13 @@ func (nd *Node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 	resp.Attr = attr
 	return
+}
+
+func (nf *Node) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (string, error) {
+	if !nf.IsLink {
+		return "", fuse.Errno(syscall.EINVAL)
+	}
+	return nf.Target, nil
 }
 
 func (nf *Node) Fsync(ctx context.Context, req *fuse.FsyncRequest) (err error) {

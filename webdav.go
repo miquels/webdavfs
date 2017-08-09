@@ -44,7 +44,9 @@ type DavError struct {
 
 type Dnode struct {
 	Name		string
+	Target		string
 	IsDir		bool
+	IsLink		bool
 	Mtime		time.Time
 	Ctime		time.Time
 	Size		uint64
@@ -53,7 +55,9 @@ type Dnode struct {
 type Props struct {
 	Name		string		`xml:"-"`
 	ResourceType_	ResourceType	`xml:"resourcetype"`
+	RefTarget_	RefTarget	`xml:"reftarget"`
 	ResourceType	string		`xml:"-"`
+	RefTarget	string		`xml:"-"`
 	CreationDate	string		`xml:"creationdate"`
 	LastModified	string		`xml:"getlastmodified"`
 	Etag		string		`xml:"getetag"`
@@ -64,6 +68,11 @@ type Props struct {
 
 type ResourceType struct {
 	Collection	*struct{}	`xml:"collection"`
+	RedirectRef	*struct{}	`xml:"redirectref"`
+}
+
+type RefTarget struct {
+	Href		*string		`xml:"href"`
 }
 
 type Propstat struct {
@@ -79,7 +88,7 @@ type MultiStatus struct {
 	Responses	[]Response	`xml:"response"`
 }
 
-var mostProps = "<D:prop><D:resourcetype/><D:creationdate/><D:getlastmodified/><D:getetag/><D:getcontentlength/></D:prop>"
+var mostProps = "<D:resourcetype/><D:creationdate/><D:getlastmodified/><D:getetag/><D:getcontentlength/>"
 
 var davTimeFormat = "2006-01-02T15:04:05Z"
 
@@ -391,7 +400,12 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Pro
 
 	a := append([]string{}, `<?xml version="1.0" encoding="utf-8" ?><D:propfind xmlns:D='DAV:'>`)
 	if len(props) == 0 {
+		a = append(a, "<D:prop>")
 		a = append(a, mostProps)
+		if d.DavSupport["redirectrefs"] {
+			a = append(a, "<D:reftarget/>")
+		}
+		a = append(a, "</D:prop>")
 	} else if len(props) == 1 && props[0] == "allprop" {
 		a = append(a, "<D:allprop/>")
 	} else {
@@ -414,7 +428,9 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Pro
 	}
 	req.Header.Set("Content-Type", "text/xml")
 	req.Header.Set("Depth", dp)
-
+	if d.DavSupport["redirectrefs"] {
+		req.Header.Set("Apply-To-Redirect-Ref", "T")
+	}
 	resp, err := d.do(req)
 	if err != nil {
 		return
@@ -465,6 +481,15 @@ func (d *DavClient) PropFind(path string, depth int, props []string) (ret []*Pro
 		name, ok := stripHrefPrefix(respTag.Href, prefix)
 		if !ok {
 			continue
+		}
+		// maybe a symlink.
+		if props.ResourceType_.RedirectRef != nil {
+			h := props.RefTarget_.Href
+			if h == nil {
+				continue
+			}
+			props.ResourceType = "redirectref"
+			props.RefTarget = *h
 		}
 		props.Name = name
 		ret = append(ret, props)
@@ -524,11 +549,17 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 		n := Dnode{
 			Name: name,
 			IsDir: p.ResourceType == "collection",
+			IsLink: p.ResourceType == "redirectref",
+			Target: p.RefTarget,
 		}
 		if detail {
 			n.Mtime = parseTime(p.LastModified)
 			n.Ctime = parseTime(p.CreationDate)
-			n.Size, _ = strconv.ParseUint(p.ContentLength, 10, 64)
+			if n.IsLink {
+				n.Size = uint64(len(n.Target))
+			} else {
+				n.Size, _ = strconv.ParseUint(p.ContentLength, 10, 64)
+			}
 		}
 		ret = append(ret, n)
 	}
