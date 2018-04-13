@@ -361,7 +361,14 @@ func (d *DavClient) Mount() (err error) {
 	// Parse headers.
 	d.Methods = mapLine(getHeader(resp.Header, "Allow"))
 	d.DavSupport = mapLine(getHeader(resp.Header, "Dav"))
-	d.IsApache = strings.Index(resp.Header.Get("Server"), "Apache") >= 0
+
+	// Is this apache with mod_dav?
+	isApache := strings.Index(resp.Header.Get("Server"), "Apache") >= 0
+	if isApache && d.DavSupport["<http://apache.org/dav/propset/fs/1>"] {
+		d.IsApache = true
+	}
+
+	// Does this server supoort sabredav-partialupdate ?
 	if d.DavSupport["sabredav-partialupdate"] {
 		d.IsSabre = true
 	}
