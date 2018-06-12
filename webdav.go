@@ -24,6 +24,7 @@ type DavClient struct {
 	Url		string
 	Username	string
 	Password	string
+	Cookie		string
 	Methods		map[string]bool
 	DavSupport	map[string]bool
 	IsSabre		bool
@@ -275,6 +276,9 @@ func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (
 	}
 	if d.Username != "" || d.Password != "" {
 		req.SetBasicAuth(d.Username, d.Password)
+	}
+	if d.Cookie != "" {
+		req.Header.Set("Cookie", d.Cookie)
 	}
 	return
 }
