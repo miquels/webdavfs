@@ -246,13 +246,15 @@ func main() {
 		MaxIdleConns: int(mountOpts.MaxIdleConns),
 		Username: username,
 		Password: password,
+		PutDisabled: mountOpts.ReadWriteDirOps,
 	}
 	err = dav.Mount()
 	if err != nil {
 		fatal(err.Error())
 	}
-	if !dav.CanPutRange() && !mountOpts.ReadOnly {
-		fmt.Fprintf(os.Stderr, "%s: no PUT Range support, writing disabled\n", url)
+	if !dav.CanPutRange() && !mountOpts.ReadOnly && !mountOpts.ReadWriteDirOps {
+		fmt.Fprintf(os.Stderr, "%s: no PUT Range support, mounting read-only\n", url)
+		mountOpts.ReadOnly = true
 	}
 	if opts.Fake {
 		return

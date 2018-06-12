@@ -126,6 +126,8 @@ Using it is simple as:
 | default_permissions	| As per fuse documentation |
 | no_default_permissions | Don't set "default_permissions" with "allow_other" |
 | ro			| Read only |
+| rwdirops		| Read-write for directory operations, but no file-writing (no PUT) |
+| rw			| Read-write (default) |
 | uid			| User ID for filesystem |
 | gid			| Group ID for filesystem. |
 | mode			| Mode for files/directories on the filesystem (600, 666, etc). |

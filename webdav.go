@@ -28,6 +28,7 @@ type DavClient struct {
 	DavSupport	map[string]bool
 	IsSabre		bool
 	IsApache	bool
+	PutDisabled	bool
 	MaxConns	int
 	MaxIdleConns	int
 	base		string
@@ -847,7 +848,7 @@ func (d *DavClient) PutRange(path string, data []byte, offset int64, create bool
 }
 
 func (d *DavClient) CanPutRange() bool {
-	return d.IsSabre || d.IsApache
+	return (d.IsSabre || d.IsApache) && !d.PutDisabled
 }
 
 func (d *DavClient) Put(path string, data []byte, create bool, excl bool) (created bool, err error) {
