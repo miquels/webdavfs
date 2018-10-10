@@ -137,7 +137,7 @@ func stripQuotes(s string) string {
 
 func stripLastSlash(s string) string {
 	l := len(s)
-	for l > 1 {
+	for l > 0 {
 		if s[l-1] != '/' {
 			return s[:l]
 		}
