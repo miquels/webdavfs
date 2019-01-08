@@ -272,7 +272,12 @@ func (d *DavClient) buildRequest(method string, path string, b ...interface{}) (
 		return
 	}
 	if (blen >= 0) {
-		req.Header.Set("Content-Length", fmt.Sprintf("%d", blen))
+		if blen == 0 {
+			// Need this to FORCE the http client to send a
+			// Content-Length header for size 0.
+			req.TransferEncoding = []string{"identity"}
+		}
+		req.ContentLength = int64(blen)
 	}
 	if d.Username != "" || d.Password != "" {
 		req.SetBasicAuth(d.Username, d.Password)
