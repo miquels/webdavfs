@@ -17,9 +17,10 @@ there is no standard for that. See
 https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
 
 However, there is support in Apache (the webserver, using mod_dav) and
-[SabreDav](SABREDAV-partialupdate.html) (a php webserver server library, used by e.g. NextCloud)
-for partial writes. So we detect if it's Apache or SabreDav we're talking
-to and then use their specific methods to partially update files.
+[SabreDav](SABREDAV-partialupdate.md) (a php webserver server library,
+used by e.g. NextCloud) for partial writes. So we detect if it's Apache or
+SabreDav we're talking to and then use their specific methods to partially
+update files.
 
 If no support for partial writes is detected, mount.webdavfs will
 print a warning and mount the filesystem read-only. In that case you can
