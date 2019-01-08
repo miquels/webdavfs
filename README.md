@@ -17,14 +17,17 @@ there is no standard for that. See
 https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare
 
 However, there is support in Apache (the webserver, using mod_dav) and
-SabreDav (a php webserver server library, used by e.g. NextCloud)
+[SabreDav](SABREDAV-partialupdate.html) (a php webserver server library, used by e.g. NextCloud)
 for partial writes. So we detect if it's Apache or SabreDav we're talking
 to and then use their specific methods to partially update files.
 
 If no support for partial writes is detected, mount.webdavfs will
-print a warning and mount the filesystem anyway, but you will not be
-able to create files or write to files. But if you only need to read
-files it's still way faster than davfs2 :)
+print a warning and mount the filesystem read-only. In that case you can
+also use the `rwdirops` mount option, this will make metadata writable
+(i.e. you can use rm / mv / mkdir / rmdir) but you still won't be able
+to write to files.
+
+But if you only need to read files it's still way faster than davfs2 :)
 
 ## What is working
 
