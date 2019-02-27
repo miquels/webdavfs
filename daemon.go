@@ -136,8 +136,8 @@ func Detach() error {
 	if err != nil {
 		return err
 	}
-	syscall.Dup2(fd, 1)
-	syscall.Dup2(fd, 2)
+	Dup2(fd, 1)
+	Dup2(fd, 2)
 	fh.Close()
 	return nil
 }

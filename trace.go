@@ -132,8 +132,8 @@ func traceredirectStdoutErr() {
 	if traceFile == nil {
 		return
 	}
-	syscall.Dup2(int(traceFile.Fd()), 1)
-	syscall.Dup2(int(traceFile.Fd()), 2)
+	Dup2(int(traceFile.Fd()), 1)
+	Dup2(int(traceFile.Fd()), 2)
 }
 
 func traceOpts(opt string, fn string) (err error)  {
