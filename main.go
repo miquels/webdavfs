@@ -8,7 +8,7 @@ import (
 	"strings"
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	getopt "github.com/pborman/getopt/v2"
+	"github.com/pborman/getopt/v2"
 )
 
 type Opts struct {
