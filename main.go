@@ -11,6 +11,8 @@ import (
 	"github.com/pborman/getopt/v2"
 )
 
+const VERSION = "1.0"
+
 type Opts struct {
 	Type		string
 	TraceOpts	string
@@ -28,18 +30,20 @@ var progname = path.Base(os.Args[0])
 
 var DefaultPath = "/usr/local/bin:/usr/local/sbin:/bin:/sbin:/usr/bin:/usr/sbin"
 
-func usage(err error) {
+func usage(err error, code int) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 	}
-	fmt.Fprintf(os.Stderr, "Usage: %s [-sf] [-D] [-T opts] [-F file] [-o opts] url mountpoint\n", progname)
-	fmt.Fprintf(os.Stderr, "       -s:         ignore unknown mount options\n")
-	fmt.Fprintf(os.Stderr, "       -f:         don't actually mount\n")
-	fmt.Fprintf(os.Stderr, "       -D:         daemonize (default when called as mount.*)\n")
-	fmt.Fprintf(os.Stderr, "       -T opts:    trace options\n")
-	fmt.Fprintf(os.Stderr, "       -F file:    trace file\n")
-	fmt.Fprintf(os.Stderr, "       -o opts:    mount options\n")
-	os.Exit(1)
+	fmt.Fprintf(os.Stderr, "Usage: %s [-sfhV] [-D] [-T opts] [-F file] [-o opts] url mountpoint\n", progname)
+	fmt.Fprintf(os.Stderr, "       -s:           ignore unknown mount options\n")
+	fmt.Fprintf(os.Stderr, "       -f:           don't actually mount\n")
+	fmt.Fprintf(os.Stderr, "       -D:           daemonize (default when called as mount.*)\n")
+	fmt.Fprintf(os.Stderr, "       -T opts:      trace options\n")
+	fmt.Fprintf(os.Stderr, "       -F file:      trace file\n")
+	fmt.Fprintf(os.Stderr, "       -o opts:      mount options\n")
+	fmt.Fprintf(os.Stderr, "       -V|--version  print version\n")
+	fmt.Fprintf(os.Stderr, "       -h|--help     print help message\n")
+	os.Exit(code)
 }
 
 func fatal(err string) {
@@ -111,6 +115,9 @@ func main() {
 	}
 	file.Close()
 
+	version := false
+	help := false
+
 	getopt.Flag(&opts.Type, 't', "type.subtype")
 	getopt.Flag(&opts.Daemonize, 'D', "daemonize")
 	getopt.Flag(&opts.TraceFile, 'F', "trace file")
@@ -120,6 +127,8 @@ func main() {
 	getopt.Flag(&opts.Fake, 'f', "do everything but the actual mount")
 	getopt.Flag(&opts.Verbose, 'v', "be verbose")
 	getopt.Flag(&opts.RawOptions, 'o', "mount options")
+	getopt.FlagLong(&version, "version", 'V', "show version").SetOptional()
+	getopt.FlagLong(&help, "help", 'h', "show this help").SetOptional()
 
 	// put non-option arguments last.
 	l := len(os.Args)
@@ -133,15 +142,24 @@ func main() {
 		os.Args = args
 	}
 
+	// Parse the options.
+	err = getopt.Getopt(nil)
+	if err != nil {
+		usage(err, 1)
+	}
+
+	if help {
+		usage(nil, 0)
+	}
+	if version {
+		fmt.Printf("webdavfs %s\n", VERSION);
+		os.Exit(0)
+	}
+
 	// check that we have two non-option args at the end
 	if l < 3 || strings.HasPrefix(os.Args[l-2], "-") ||
 	            strings.HasPrefix(os.Args[l-1], "-") {
-		usage(nil)
-	}
-
-	err = getopt.Getopt(nil)
-	if err != nil {
-		usage(err)
+		usage(nil, 1)
 	}
 
 	// now the two non-options left are url and mountpoint.
