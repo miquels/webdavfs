@@ -44,3 +44,9 @@ partial put.
   https://blog.sphere.chronosempire.org.uk/2012/11/21/webdav-and-the-http-patch-nightmare  
   http://sabre.io/dav/http-patch/  
 
+## Partial PUT support as a standard
+
+There seems to be some movement in this space. RFC9110 mentions
+[partial PUT using the `Content-Range` header](https://www.rfc-editor.org/rfc/rfc9110.html#name-partial-put), even though that is very unsafe - on servers not supporting it you'll get instant data corruption.
+
+Seperately, there's a [Byte Range PATCH](https://datatracker.ietf.org/doc/draft-wright-http-patch-byterange/) draft RFC. This one looks better, let's hope it goes forward.
