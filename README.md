@@ -52,40 +52,27 @@ Basic filesystem operations.
 This is basically because these are mostly just missing properties
 from webdav.
 
+## What platforms does it run on
+
+- Linux
+- FreeBSD (untested, but should work)
+- It might work on macos if you use [osxfuse 3](https://github.com/osxfuse/osxfuse/releases/tag/osxfuse-3.11.2). Then again it might not. This is completely unsupported. See also [this issue](https://github.com/miquels/webdavfs/issues/11).
+
 ## How to install and use.
 
 First you need to install golang, git, fuse, and set up your environment.
-
-Note that you need at least Go 1.4 (probably 1.6). If you're on Debian,
-everything before Debian 8 (jessie) is too old. On jessie you need to
-add the jessie-backports source, then install go from backports.
+For Debian:
 
 ```
-# echo "deb http://ftp.debian.org/debian jessie-backports main" > /etc/apt/sources.list.d/jessie-backports.list
-# apt-get update
-# apt-get install -t jessie-backports golang
-```
-
-Then if your Go version is up to date, continue:
-
-```
-$ su -m
+$ sudo -s
 Password:
-# apt-get install golang
-# apt-get install git
-# apt-get install fuse
+# apt-get install golang git fuse
 # exit
-$ cd
-$ mkdir pkg bin src
-$ export GOPATH=$HOME
 ```
 
 Now with go and git installed, get a copy of this github repository:
 
 ```
-$ cd src
-$ mkdir -p github.com/miquels
-$ cd github.com/miquels
 $ git clone https://github.com/miquels/webdavfs
 $ cd webdavfs
 ```
@@ -100,7 +87,7 @@ $ go build
 And install it:
 
 ```
-$ su -m
+$ sudo -s
 Password:
 # cp webdavfs /sbin/mount.webdavfs
 ```
