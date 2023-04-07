@@ -25,6 +25,7 @@ type MountOptions struct {
 	NonEmpty		bool
 	MaxConns		uint32
 	MaxIdleConns		uint32
+	SabreDavPartialUpdate	bool
 }
 
 func parseUInt32(v string, base int, name string, loc *uint32) (err error) {
@@ -81,6 +82,8 @@ func parseMountOptions(n string, sloppy bool) (mo MountOptions, err error) {
 			err = parseUInt32(v, 10, "maxconns", &mo.MaxConns)
 		case "maxidleconns":
 			err = parseUInt32(v, 10, "maxidleconns", &mo.MaxIdleConns)
+		case "sabredav_partialupdate":
+			mo.SabreDavPartialUpdate = true
 		default:
 			if !sloppy {
 				err = errors.New(a[0] + ": unknown option")

@@ -131,6 +131,8 @@ Using it is simple as:
 | maxconns              | Maximum number of parallel connections to the webdav
 |                       | server (default 8)
 | maxidleconns          | Maximum number of idle connections (default 8)
+| sabredav_partialupdate | Use the sabredav partialupdate protocol even when
+|                        | the remote server doesn't advertise support (DANGEROUS)
 
 If the webdavfs program is called via `mount -t webdavfs` or as `mount.webdav`,
 it will fork, re-exec and run in the background. In that case it will remove

@@ -273,6 +273,7 @@ func main() {
 		Password: password,
 		Cookie: cookie,
 		PutDisabled: mountOpts.ReadWriteDirOps,
+		IsSabre: mountOpts.SabreDavPartialUpdate,
 	}
 	err = dav.Mount()
 	if err != nil {
