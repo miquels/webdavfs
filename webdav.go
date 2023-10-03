@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 	"bazil.org/fuse"
+	"github.com/icholy/digest"
 )
 
 type davEmpty struct {}
@@ -347,7 +348,11 @@ func (d *DavClient) Mount() (err error) {
 
 		d.cc = &http.Client{
 			Timeout: 60 * time.Second,
-			Transport: &tr,
+			Transport: &digest.Transport{
+				Transport: &tr,
+				Username: d.Username,
+				Password: d.Password,
+			},
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return errors.New("400 Will not follow redirect")
 			},
