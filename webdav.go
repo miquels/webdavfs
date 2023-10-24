@@ -373,8 +373,7 @@ func (d *DavClient) Mount() (err error) {
 	d.DavSupport = mapLine(getHeader(resp.Header, "Dav"))
 
 	// Is this apache with mod_dav?
-	isApache := strings.Index(resp.Header.Get("Server"), "Apache") >= 0
-	if isApache && d.DavSupport["<http://apache.org/dav/propset/fs/1>"] {
+	if strings.Contains(resp.Header.Get("Server"), "Apache") && d.DavSupport["<http://apache.org/dav/propset/fs/1>"] {
 		d.IsApache = true
 	}
 
@@ -557,7 +556,7 @@ func (d *DavClient) Readdir(path string, detail bool) (ret []Dnode, err error) {
 		if name == "" || name == "/" {
 			name = "."
 		}
-		if strings.Index(name, "/") >= 0 {
+		if strings.Contains(name, "/") {
 			continue
 		}
 		if name == "._.DS_Store" || name == ".DS_Store" {
