@@ -378,7 +378,7 @@ func (d *DavClient) Mount() (err error) {
 		d.IsApache = true
 	}
 
-	// Does this server supoort sabredav-partialupdate ?
+	// Does this server support sabredav-partialupdate ?
 	if d.DavSupport["sabredav-partialupdate"] {
 		d.IsSabre = true
 	}

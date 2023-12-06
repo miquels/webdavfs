@@ -8,7 +8,7 @@ The `Sabre\\DAV\\PartialUpdate\\Plugin` from the Sabre DAV library provides
 support for the HTTP PATCH method [RFC5789](http://tools.ietf.org/html/rfc5789).
 This allows you to update just a portion of a file, or append to a file.
 
-This document can be used as a spec for other implementors. There is some
+This document can be used as a spec for other implementers. There is some
 DAV-specific stuff in this document, but only in relation to the OPTIONS
 request.
 
